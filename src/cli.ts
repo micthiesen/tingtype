@@ -19,7 +19,8 @@ function usage(): void {
 Usage: tingtype <command> [options]
 
 Commands:
-  run                 Start the detection → gesture → keypress daemon
+  run [--dry-run]     Start the detection → gesture → keypress daemon
+                      (--dry-run logs gestures but fires no keystrokes)
   monitor             Live detector readout for tuning (no keypresses fired)
   devices             List Core Audio input devices
   gen   [opts]        Synthesize the signature WAV to load onto the ting
@@ -57,7 +58,7 @@ function buildPipeline(app: AppConfig, presser: KeyPresser) {
   return { detector, gesture, supervisor };
 }
 
-async function cmdRun(app: AppConfig): Promise<void> {
+async function cmdRun(app: AppConfig, dryRun: boolean): Promise<void> {
   const config = getConfig();
   if (config.PUSHOVER_USER && config.PUSHOVER_TOKEN) {
     Logger.onError = ({ title, body }) =>
@@ -66,12 +67,15 @@ async function cmdRun(app: AppConfig): Promise<void> {
       );
   }
 
-  const presser = new CliclickPresser();
+  // In dry-run, decode and log gestures but fire no keystrokes — for tuning the
+  // gesture timing on real hardware without keys landing in your apps.
+  const presser: KeyPresser = dryRun ? { press: () => {} } : new CliclickPresser();
   const { supervisor } = buildPipeline(app, presser);
 
   logger.info(
-    `Listening on "${app.audio.inputDevice}" — tones ${app.detector.tones.join("/")} Hz; ` +
-      `tap → ${app.actions.primary}, hold(${app.gesture.holdMs}ms)/double-tap → ${app.actions.secondary}`,
+    `${dryRun ? "[DRY RUN — no keystrokes] " : ""}Listening on "${app.audio.inputDevice}" — ` +
+      `tones ${app.detector.tones.join("/")} Hz; tap → ${app.actions.primary}, ` +
+      `hold(${app.gesture.holdMs}ms)/double-tap → ${app.actions.secondary}`,
   );
 
   let shuttingDown = false;
@@ -236,7 +240,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case "run":
-      await cmdRun(app);
+      await cmdRun(app, args.string("dry-run") !== undefined);
       break;
     case "monitor":
       await cmdMonitor(app);
