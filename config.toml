@@ -1,0 +1,31 @@
+# tingtype tuning config. Edit and restart (`tingtype restart`) to apply.
+# Calibrate the detector against your actual signal with `tingtype monitor`.
+
+[audio]
+# Substring-matched against Core Audio input device names (see `tingtype devices`).
+input_device = "CUBILUX HLMS-C4 Line IN"
+samplerate   = 48000
+
+[detector]
+# Chord tones in Hz. `tingtype gen` snaps these to FFT bin centers (fs/window).
+tones                   = [2016, 2484, 3141]
+window                  = 1024   # FFT size (samples); bin resolution = samplerate/window
+hop                     = 256    # analysis stride (samples)
+k_consecutive           = 4      # hot windows required before a chord onset
+concentration_threshold = 0.5    # fraction of one-sided spectral energy in the target bins
+per_band_min_share      = 0.08   # min share of energy each tone must carry (rejects single tones)
+noise_floor             = [0, 0, 0]  # per-band power floor; 0 => auto-estimate at runtime
+release_windows         = 2      # cold windows required to close a chord
+refractory_ms           = 200    # ignore re-onsets for this long after a release
+
+[gesture]
+# Short press fires `tap`; a sustained chord fires `hold` the instant it crosses
+# hold_ms (it does NOT wait for release). The ting sample must use hold/loop
+# playmode so the chord sustains while the white button is held.
+hold_ms      = 400
+refractory_ms = 250
+
+[actions]
+# Keyspecs: "mod+mod+key". mods = cmd | shift | ctrl | opt/alt | fn.
+tap  = "ctrl+opt+space"   # short press
+hold = "return"           # long hold (Enter)

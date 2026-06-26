@@ -1,0 +1,5 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+  "extends": ["@micthiesen/mitools/biome.shared.json"],
+  "files": { "includes": ["src/**", "*.json"] }
+}

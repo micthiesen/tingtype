@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve through symlinks (this is symlinked into ~/.local/bin by install.sh).
+REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+BUN="${BUN:-$HOME/.bun/bin/bun}"
+[ -x "$BUN" ] || BUN="$(command -v bun)"
+
+cmd="${1:-}"
+
+case "$cmd" in
+  install|start|stop|restart|deploy|status|logs|kill)
+    shift
+    exec bash "$REPO_DIR/scripts/$cmd.sh" "$@"
+    ;;
+  run|monitor|devices|gen|test)
+    exec "$BUN" "$REPO_DIR/src/cli.ts" "$@"
+    ;;
+  ""|help|-h|--help)
+    exec "$BUN" "$REPO_DIR/src/cli.ts" help
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    echo "Run 'tingtype help' for usage." >&2
+    exit 1
+    ;;
+esac

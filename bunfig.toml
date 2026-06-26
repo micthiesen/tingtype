@@ -1,0 +1,6 @@
+# Bun runs straight from TypeScript source; there is no build step.
+[install]
+exact = false
+
+[test]
+preload = ["./src/test-setup.ts"]
