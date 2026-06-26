@@ -103,10 +103,14 @@ async function cmdMonitor(app: AppConfig): Promise<void> {
   );
 
   let lastPrint = 0;
+  let lastPresent = false;
   detector.onWindow = (w) => {
     const now = w.t;
-    // Throttle to ~20 lines/sec, but always print while the chord is present.
-    if (!w.present && now - lastPrint < 0.05) return;
+    // Always print on a present-state change (so mid-chord dropouts are visible),
+    // print every window while the chord is present, and throttle quiet windows.
+    const changed = w.present !== lastPresent;
+    lastPresent = w.present;
+    if (!w.present && !changed && now - lastPrint < 0.05) return;
     lastPrint = now;
     const bands = w.bands.map((b) => fmtDb(b)).join(" ");
     const floors = w.floors.map((f) => (f > 0 ? fmtDb(f) : "auto")).join(" ");

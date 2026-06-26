@@ -189,9 +189,16 @@ export class Detector {
     // only on hardware).
     let totalEnergy = 0;
     for (let k = this.lowCutBin; k < power.length; k++) totalEnergy += power[k];
+    // Sum each tone's Hann main lobe (k-1, k, k+1), not just the center bin —
+    // the window smears ~1/3 of a bin-centered tone's energy into its neighbors,
+    // so a single-bin read caps a clean chord's concentration near 0.66 and lets
+    // tiny dips fall under threshold (mid-chord dropouts). The lobe sum reflects
+    // true tone energy (~0.95 concentration) with margin to spare.
+    const top = power.length - 1;
     let bandEnergy = 0;
     for (let i = 0; i < this.bins.length; i++) {
-      const p = power[this.bins[i]];
+      const k = this.bins[i];
+      const p = power[k] + (k > 0 ? power[k - 1] : 0) + (k < top ? power[k + 1] : 0);
       this.bands[i] = p;
       bandEnergy += p;
     }

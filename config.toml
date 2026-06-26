@@ -15,7 +15,7 @@ k_consecutive           = 4      # hot windows required before a chord onset
 concentration_threshold = 0.5    # fraction of one-sided spectral energy in the target bins
 per_band_min_share      = 0.08   # min share of energy each tone must carry (rejects single tones)
 noise_floor             = [0, 0, 0]  # per-band power floor; 0 => auto-estimate at runtime
-release_windows         = 2      # cold windows required to close a chord
+release_windows         = 4      # cold windows required to close a chord (bridges brief dropouts)
 refractory_ms           = 200    # ignore re-onsets for this long after a release
 max_chord_ms            = 5000   # watchdog: force a release if a chord sticks this long
 

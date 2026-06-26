@@ -1,0 +1,15 @@
+{
+  "name": "TINGTYPE",
+  "samples": [
+    { "file": "1.wav", "playmode": "hold" },
+    { "file": "2.wav", "playmode": "hold" },
+    { "file": "3.wav", "playmode": "hold" },
+    { "file": "4.wav", "playmode": "hold" }
+  ],
+  "presets": [
+    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] },
+    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] },
+    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] },
+    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] }
+  ]
+}
