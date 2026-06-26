@@ -1,27 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { type DetectionEvent, Detector, type DetectorOptions } from "./detect.js";
+import { type DetectionEvent, Detector } from "./detect.js";
+import { detectorOpts, FS, TONES, WINDOW } from "./fixtures.js";
 import { freqToBin, goertzelPower, hannWindow } from "./goertzel.js";
 import { synthesizeSignature } from "./signature.js";
-
-const FS = 48000;
-const WINDOW = 1024;
-const TONES = [2016, 2484, 3141];
-
-function detectorOpts(overrides: Partial<DetectorOptions> = {}): DetectorOptions {
-  return {
-    fs: FS,
-    window: WINDOW,
-    hop: 256,
-    tones: TONES,
-    kConsecutive: 4,
-    concentrationThreshold: 0.5,
-    perBandMinShare: 0.08,
-    noiseFloor: [0, 0, 0],
-    releaseWindows: 2,
-    refractoryMs: 200,
-    ...overrides,
-  };
-}
 
 describe("synthesizeSignature", () => {
   it("snaps tones to exact FFT bin centers", () => {

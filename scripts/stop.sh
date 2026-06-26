@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-launchctl bootout "gui/$(id -u)/com.tingtype.daemon"
-echo "Stopped."
+source "$(dirname "$0")/_common.sh"
+
+if is_loaded; then
+  launchctl bootout "$DOMAIN/$SERVICE_ID"
+  echo "Stopped."
+else
+  echo "Not running."
+fi

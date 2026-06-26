@@ -17,6 +17,7 @@ per_band_min_share      = 0.08   # min share of energy each tone must carry (rej
 noise_floor             = [0, 0, 0]  # per-band power floor; 0 => auto-estimate at runtime
 release_windows         = 2      # cold windows required to close a chord
 refractory_ms           = 200    # ignore re-onsets for this long after a release
+max_chord_ms            = 5000   # watchdog: force a release if a chord sticks this long
 
 [gesture]
 # Short press fires `tap`; a sustained chord fires `hold` the instant it crosses

@@ -39,8 +39,18 @@ describe("parseKeySpec", () => {
     });
   });
 
-  it("rejects unknown modifiers and empty specs", () => {
-    expect(() => parseKeySpec("hyper+space")).toThrow();
+  it("accepts known multi-char named keys", () => {
+    expect(parseKeySpec("f5")).toEqual({ modifiers: [], key: "f5", named: true });
+    expect(parseKeySpec("cmd+arrow-up")).toEqual({
+      modifiers: ["cmd"],
+      key: "arrow-up",
+      named: true,
+    });
+  });
+
+  it("rejects unknown modifiers, unknown keys, and empty specs", () => {
+    expect(() => parseKeySpec("hyper+space")).toThrow(/modifier/);
+    expect(() => parseKeySpec("ctrl+nope")).toThrow(/Unknown key/);
     expect(() => parseKeySpec("")).toThrow();
   });
 });

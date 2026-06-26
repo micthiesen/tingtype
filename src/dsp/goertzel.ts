@@ -27,7 +27,7 @@ export function binToFreq(k: number, fs: number, n: number): number {
   return (k * fs) / n;
 }
 
-/** Hann window of length `n` (periodic-ish, denominator n-1). */
+/** Symmetric Hann window of length `n` (denominator n-1). */
 export function hannWindow(n: number): Float64Array {
   const w = new Float64Array(n);
   if (n === 1) {

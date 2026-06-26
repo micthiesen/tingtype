@@ -31,6 +31,69 @@ const KEY_ALIASES: Record<string, string> = {
   backspace: "delete",
 };
 
+/** cliclick's `kp:` named-key vocabulary (see `cliclick kp:?`). */
+const KNOWN_NAMED_KEYS = new Set([
+  "arrow-down",
+  "arrow-left",
+  "arrow-right",
+  "arrow-up",
+  "brightness-down",
+  "brightness-up",
+  "delete",
+  "end",
+  "enter",
+  "esc",
+  "f1",
+  "f2",
+  "f3",
+  "f4",
+  "f5",
+  "f6",
+  "f7",
+  "f8",
+  "f9",
+  "f10",
+  "f11",
+  "f12",
+  "f13",
+  "f14",
+  "f15",
+  "f16",
+  "fwd-delete",
+  "home",
+  "keys-light-down",
+  "keys-light-toggle",
+  "keys-light-up",
+  "mute",
+  "num-0",
+  "num-1",
+  "num-2",
+  "num-3",
+  "num-4",
+  "num-5",
+  "num-6",
+  "num-7",
+  "num-8",
+  "num-9",
+  "num-clear",
+  "num-divide",
+  "num-enter",
+  "num-equals",
+  "num-minus",
+  "num-multiply",
+  "num-plus",
+  "page-down",
+  "page-up",
+  "play-next",
+  "play-pause",
+  "play-previous",
+  "return",
+  "space",
+  "tab",
+  "volume-down",
+  "volume-up",
+]);
+
 export interface ParsedKeySpec {
   modifiers: string[];
   /** A cliclick `kp:` key name, or a literal character to type via `t:`. */
@@ -59,8 +122,8 @@ export function parseKeySpec(spec: string): ParsedKeySpec {
   const aliased = KEY_ALIASES[keyToken];
   if (aliased) return { modifiers, key: aliased, named: true };
   if (keyToken.length === 1) return { modifiers, key: keyToken, named: false };
-  // Assume it's a cliclick special-key name (e.g. arrow-up, f5, page-down).
-  return { modifiers, key: keyToken, named: true };
+  if (KNOWN_NAMED_KEYS.has(keyToken)) return { modifiers, key: keyToken, named: true };
+  throw new Error(`Unknown key "${keyToken}" in keyspec "${spec}"`);
 }
 
 /** Build the cliclick argument vector for a parsed keyspec. */
@@ -92,12 +155,14 @@ export class CliclickPresser implements KeyPresser {
         stdout: "ignore",
         stderr: "pipe",
       });
-      proc.exited.then(async (code) => {
-        if (code !== 0) {
-          const stderr = await new Response(proc.stderr).text();
-          logger.error(`cliclick exited ${code} for "${spec}": ${stderr.trim()}`);
-        }
-      });
+      proc.exited
+        .then(async (code) => {
+          if (code !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            logger.error(`cliclick exited ${code} for "${spec}": ${stderr.trim()}`);
+          }
+        })
+        .catch((err) => logger.error(`cliclick wait failed for "${spec}"`, err));
     } catch (err) {
       logger.error(`Failed to spawn cliclick for "${spec}" (is it installed?)`, err);
     }

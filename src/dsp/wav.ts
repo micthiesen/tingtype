@@ -44,6 +44,7 @@ export function encodeWavMono16(samples: Float32Array, sampleRate: number): Uint
  */
 export function decodeWav(bytes: Uint8Array): WavData {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.byteLength < 12) throw new Error("Not a WAV file (too small)");
   const tag = (offset: number) =>
     String.fromCharCode(
       view.getUint8(offset),
@@ -57,6 +58,7 @@ export function decodeWav(bytes: Uint8Array): WavData {
   let channels = 1;
   let sampleRate = 48000;
   let bitsPerSample = 16;
+  let sawFmt = false;
   let dataOffset = -1;
   let dataLength = 0;
 
@@ -65,18 +67,30 @@ export function decodeWav(bytes: Uint8Array): WavData {
     const chunkId = tag(offset);
     const chunkSize = view.getUint32(offset + 4, true);
     const body = offset + 8;
-    if (chunkId === "fmt ") {
+    if (chunkId === "fmt " && body + 16 <= view.byteLength) {
       format = view.getUint16(body, true);
       channels = view.getUint16(body + 2, true);
       sampleRate = view.getUint32(body + 4, true);
       bitsPerSample = view.getUint16(body + 14, true);
+      sawFmt = true;
     } else if (chunkId === "data") {
       dataOffset = body;
-      dataLength = chunkSize;
+      // Trust the buffer, not the declared size — guards truncated/crafted files.
+      dataLength = Math.min(chunkSize, view.byteLength - body);
     }
     offset = body + chunkSize + (chunkSize & 1); // chunks are word-aligned
   }
+  if (!sawFmt) throw new Error("WAV has no fmt chunk");
   if (dataOffset < 0) throw new Error("WAV has no data chunk");
+  if (channels < 1) throw new Error(`WAV has invalid channel count: ${channels}`);
+  if (
+    ![16, 32].includes(bitsPerSample) ||
+    (bitsPerSample === 32 && ![1, 3].includes(format))
+  ) {
+    throw new Error(
+      `Unsupported WAV sample format: ${bitsPerSample}-bit, fmt ${format}`,
+    );
+  }
 
   const bytesPerSample = bitsPerSample >> 3;
   const frames = Math.floor(dataLength / (bytesPerSample * channels));
@@ -87,11 +101,7 @@ export function decodeWav(bytes: Uint8Array): WavData {
       const p = dataOffset + (i * channels + c) * bytesPerSample;
       if (format === 3 && bitsPerSample === 32) sum += view.getFloat32(p, true);
       else if (bitsPerSample === 16) sum += view.getInt16(p, true) / 32768;
-      else if (bitsPerSample === 32) sum += view.getInt32(p, true) / 2147483648;
-      else
-        throw new Error(
-          `Unsupported WAV sample format: ${bitsPerSample}-bit, fmt ${format}`,
-        );
+      else sum += view.getInt32(p, true) / 2147483648; // 32-bit int PCM
     }
     samples[i] = sum / channels;
   }

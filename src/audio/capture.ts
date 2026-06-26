@@ -1,6 +1,7 @@
 import { Logger } from "@micthiesen/mitools/logging";
 import type { Subprocess } from "bun";
 import { listInputDevices, resolveDevice } from "./devices.js";
+import { PcmFramer } from "./pcm.js";
 
 const logger = new Logger("Audio");
 
@@ -32,8 +33,8 @@ export class CaptureSupervisor {
 
   private proc: Subprocess<"ignore", "pipe", "pipe"> | null = null;
   private stopping = false;
-  private waiting = false; // whether we've already logged the "waiting" notice
-  private leftover: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  private loggedWaitingNotice = false;
+  private readonly framer = new PcmFramer();
 
   constructor(private readonly opts: CaptureOptions) {
     this.ffmpeg = opts.ffmpeg ?? "ffmpeg";
@@ -51,8 +52,8 @@ export class CaptureSupervisor {
         listInputDevices(this.ffmpeg),
       );
       if (!device) {
-        if (!this.waiting) {
-          this.waiting = true;
+        if (!this.loggedWaitingNotice) {
+          this.loggedWaitingNotice = true;
           logger.warn(
             `Input device matching "${this.opts.deviceSubstring}" not found — waiting for it to (re)connect…`,
           );
@@ -60,8 +61,8 @@ export class CaptureSupervisor {
         await delay(this.pollIntervalMs);
         continue;
       }
-      if (this.waiting) {
-        this.waiting = false;
+      if (this.loggedWaitingNotice) {
+        this.loggedWaitingNotice = false;
         logger.info(`Input device connected: ${device.name}`);
       }
 
@@ -88,7 +89,7 @@ export class CaptureSupervisor {
 
   /** Stream until ffmpeg exits. Returns true if any audio was received. */
   private async streamFrom(deviceName: string): Promise<boolean> {
-    this.leftover = new Uint8Array(0);
+    this.framer.reset();
     let received = false;
 
     try {
@@ -117,48 +118,37 @@ export class CaptureSupervisor {
       return false;
     }
 
+    // Drain stderr concurrently — an unconsumed full pipe would stall ffmpeg
+    // (and thus stdout) indefinitely. We also use it to report the exit reason.
+    const stderrText = drainText(this.proc.stderr);
+
     try {
       for await (const chunk of this.proc.stdout) {
         received = true;
-        const frame = this.decode(chunk as Uint8Array);
+        const frame = this.framer.push(chunk);
         if (frame.length > 0) this.onSamples?.(frame);
       }
     } catch (err) {
       if (!this.stopping) logger.warn(`Audio read error: ${String(err)}`);
     }
 
-    const code = await this.proc.exited;
+    await this.proc.exited;
     if (!this.stopping && !received) {
-      const stderr = await new Response(this.proc.stderr).text();
-      if (stderr.trim()) logger.warn(`ffmpeg: ${stderr.trim()}`);
+      const stderr = (await stderrText).trim();
+      if (stderr) logger.warn(`ffmpeg: ${stderr}`);
     }
-    void code;
     this.proc = null;
     return received;
   }
-
-  /** Decode little-endian float32 bytes, carrying any partial trailing sample. */
-  private decode(chunk: Uint8Array<ArrayBufferLike>): Float32Array {
-    const buf = this.leftover.length === 0 ? chunk : concat(this.leftover, chunk);
-    const sampleCount = buf.byteLength >> 2; // 4 bytes per float
-    const usableBytes = sampleCount << 2;
-    this.leftover = buf.subarray(usableBytes);
-
-    const out = new Float32Array(sampleCount);
-    const view = new DataView(buf.buffer, buf.byteOffset, usableBytes);
-    for (let i = 0; i < sampleCount; i++) out[i] = view.getFloat32(i << 2, true);
-    return out;
-  }
 }
 
-function concat(
-  a: Uint8Array<ArrayBufferLike>,
-  b: Uint8Array<ArrayBufferLike>,
-): Uint8Array {
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a, 0);
-  out.set(b, a.length);
-  return out;
+/** Read a stream to completion as text; never rejects (drains even on error). */
+async function drainText(stream: ReadableStream<Uint8Array>): Promise<string> {
+  try {
+    return await new Response(stream).text();
+  } catch {
+    return "";
+  }
 }
 
 function delay(ms: number): Promise<void> {

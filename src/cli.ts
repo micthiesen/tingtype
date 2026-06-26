@@ -48,7 +48,11 @@ function buildPipeline(app: AppConfig, presser: KeyPresser) {
     presser.press(spec);
   };
   detector.onEvent = (e) => gesture.handle(e);
-  detector.onWindow = (w) => gesture.tick(w.t);
+  // Only age the hold timer while the chord is actually present; ticking on the
+  // trailing cold windows would let a released tap cross the hold threshold.
+  detector.onWindow = (w) => {
+    if (w.present) gesture.tick(w.t);
+  };
   supervisor.onSamples = (s) => detector.feed(s);
 
   return { detector, gesture, supervisor };
@@ -141,8 +145,21 @@ function cmdDevices(): void {
 
 function cmdGen(app: AppConfig, args: Args): void {
   const out = args.string("out") ?? "signature.wav";
-  const tones = args.string("tones")?.split(",").map(Number) ?? app.detector.tones;
+
+  const tonesArg = args.string("tones");
+  const tones = tonesArg ? tonesArg.split(",").map(Number) : app.detector.tones;
+  if (tones.length === 0 || tones.some((f) => !Number.isFinite(f) || f <= 0)) {
+    throw new Error(
+      `--tones must be a comma-separated list of positive numbers, got "${tonesArg}"`,
+    );
+  }
+
   const durationMs = args.number("duration-ms") ?? 150;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    throw new Error(
+      `--duration-ms must be a positive number, got "${args.string("duration-ms")}"`,
+    );
+  }
 
   const result = synthesizeSignature({
     tones,
@@ -166,8 +183,10 @@ async function cmdTest(app: AppConfig, args: Args): Promise<void> {
   let sampleRate = app.audio.sampleRate;
 
   if (wavPath) {
+    const file = Bun.file(wavPath);
+    if (!(await file.exists())) throw new Error(`WAV not found: ${wavPath}`);
     const { decodeWav } = await import("./dsp/wav.js");
-    const decoded = decodeWav(new Uint8Array(await Bun.file(wavPath).arrayBuffer()));
+    const decoded = decodeWav(new Uint8Array(await file.arrayBuffer()));
     samples = decoded.samples;
     sampleRate = decoded.sampleRate;
     console.log(`Loaded ${wavPath} (${samples.length} samples @ ${sampleRate}Hz).`);
@@ -266,6 +285,8 @@ class Args {
 }
 
 main().catch((err) => {
-  logger.error("Fatal error", err);
+  // User-facing CLI errors (bad flags, missing/invalid config) read better as a
+  // one-line message than a stack trace; reserve the stack for unexpected faults.
+  console.error(`tingtype: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
 });

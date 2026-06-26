@@ -1,26 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { type DetectionEvent, Detector, type DetectorOptions } from "./detect.js";
+import { type DetectionEvent, Detector } from "./detect.js";
+import { FS, detectorOpts as opts, TONES, WINDOW } from "./fixtures.js";
 import { synthesizeSignature } from "./signature.js";
-
-const FS = 48000;
-const WINDOW = 1024;
-const TONES = [2016, 2484, 3141];
-
-function opts(overrides: Partial<DetectorOptions> = {}): DetectorOptions {
-  return {
-    fs: FS,
-    window: WINDOW,
-    hop: 256,
-    tones: TONES,
-    kConsecutive: 4,
-    concentrationThreshold: 0.5,
-    perBandMinShare: 0.08,
-    noiseFloor: [0, 0, 0],
-    releaseWindows: 2,
-    refractoryMs: 200,
-    ...overrides,
-  };
-}
 
 function run(samples: Float32Array, o = opts()): DetectionEvent[] {
   const events: DetectionEvent[] = [];
@@ -100,5 +81,52 @@ describe("Detector debounce / refractory", () => {
     samples.set(sig.samples, Math.floor(FS * 0.9)); // 2nd chord well past refractory
     const onsets = run(samples).filter((e) => e.type === "onset");
     expect(onsets).toHaveLength(2);
+  });
+
+  it("suppresses a second chord that lands within the refractory window", () => {
+    const sig = synthesizeSignature({
+      tones: TONES,
+      durationMs: 120,
+      fs: FS,
+      window: WINDOW,
+    });
+    const samples = new Float32Array(FS);
+    samples.set(sig.samples, Math.floor(FS * 0.2)); // chord #1: 0.20–0.32s
+    samples.set(sig.samples, Math.floor(FS * 0.4)); // chord #2: 0.40s, within 200ms refractory of release
+    const onsets = run(samples, opts({ refractoryMs: 400 })).filter(
+      (e) => e.type === "onset",
+    );
+    expect(onsets).toHaveLength(1);
+  });
+});
+
+describe("Detector noise floor", () => {
+  it("suppresses an otherwise-present chord when the configured floor is above its band power", () => {
+    const sig = synthesizeSignature({
+      tones: TONES,
+      durationMs: 200,
+      fs: FS,
+      window: WINDOW,
+    });
+    const samples = new Float32Array(FS);
+    samples.set(sig.samples, Math.floor(FS * 0.3));
+    // A floor far above any real band power blocks every tone.
+    const events = run(samples, opts({ noiseFloor: [1e9, 1e9, 1e9] }));
+    expect(events).toEqual([]);
+  });
+});
+
+describe("Detector watchdog", () => {
+  it("force-releases a chord that stays present past maxChordMs", () => {
+    // A continuous chord that never stops: the watchdog must emit a release.
+    const sig = synthesizeSignature({
+      tones: TONES,
+      durationMs: 2000,
+      fs: FS,
+      window: WINDOW,
+    });
+    const events = run(sig.samples, opts({ maxChordMs: 500, refractoryMs: 0 }));
+    expect(events[0]?.type).toBe("onset");
+    expect(events.some((e) => e.type === "release")).toBe(true);
   });
 });

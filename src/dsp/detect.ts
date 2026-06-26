@@ -25,6 +25,8 @@ export interface DetectorOptions {
   releaseWindows: number;
   /** Ignore new onsets for this long (ms) after a release. */
   refractoryMs: number;
+  /** Safety watchdog: force a release if a chord stays present longer than this (ms). */
+  maxChordMs: number;
 }
 
 /** Per-window analysis snapshot, surfaced to `monitor` for tuning. */
@@ -86,9 +88,12 @@ class NoiseFloorEstimator {
 }
 
 /**
- * Goertzel/FFT chord detector. Feed it mono PCM via {@link feed}; it emits
- * de-bounced onset/release events and per-window snapshots. Pure and
- * synchronous — drive it from synthesized buffers in tests with no hardware.
+ * FFT chord detector. Feed it mono PCM via {@link feed}; it emits de-bounced
+ * onset/release events and per-window snapshots. Pure and synchronous — drive it
+ * from synthesized buffers in tests with no hardware.
+ *
+ * The per-window snapshot passed to {@link onWindow} is a single reused object;
+ * a synchronous consumer (the monitor) may read it but must not retain it.
  */
 export class Detector {
   onEvent: ((event: DetectionEvent) => void) | null = null;
@@ -99,7 +104,16 @@ export class Detector {
   private readonly fft: FftScratch;
   private readonly scratch: Float64Array;
   private readonly ring: Float64Array;
+  private readonly mask: number;
+  /** Lowest FFT bin counted in `total`; excludes DC, mains hum, and rumble. */
+  private readonly lowCutBin: number;
   private readonly floor: NoiseFloorEstimator;
+  private readonly hasAutoFloor: boolean;
+
+  // Reused per-window buffers (avoid hot-path allocation at ~188 Hz).
+  private readonly bands: number[];
+  private readonly floors: number[];
+  private readonly result: WindowResult;
 
   private writeIdx = 0;
   private total = 0;
@@ -108,6 +122,7 @@ export class Detector {
   private hotStreak = 0;
   private coldStreak = 0;
   private active = false;
+  private activeOnsetT = 0;
   private refractoryUntil = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly opts: DetectorOptions) {
@@ -119,7 +134,19 @@ export class Detector {
     this.fft = new FftScratch(opts.window);
     this.scratch = new Float64Array(opts.window);
     this.ring = new Float64Array(opts.window);
+    this.mask = opts.window - 1;
+    this.lowCutBin = Math.max(1, freqToBin(200, opts.fs, opts.window));
     this.floor = new NoiseFloorEstimator(opts.tones.length);
+    this.hasAutoFloor = opts.noiseFloor.some((f) => f <= 0);
+    this.bands = new Array<number>(opts.tones.length).fill(0);
+    this.floors = new Array<number>(opts.tones.length).fill(0);
+    this.result = {
+      t: 0,
+      bands: this.bands,
+      concentration: 0,
+      floors: this.floors,
+      present: false,
+    };
   }
 
   /** Bin index per configured tone (for monitor display / tests). */
@@ -136,7 +163,7 @@ export class Detector {
     const { window, hop } = this.opts;
     for (let i = 0; i < samples.length; i++) {
       this.ring[this.writeIdx] = samples[i];
-      this.writeIdx = (this.writeIdx + 1) % window;
+      this.writeIdx = (this.writeIdx + 1) & this.mask;
       this.total++;
       this.sinceHop++;
       if (this.total >= window && this.sinceHop >= hop) {
@@ -151,55 +178,82 @@ export class Detector {
 
     // Extract the window oldest-to-newest and apply the Hann taper.
     for (let i = 0; i < window; i++) {
-      this.scratch[i] = this.ring[(this.writeIdx + i) % window] * this.hann[i];
+      this.scratch[i] = this.ring[(this.writeIdx + i) & this.mask] * this.hann[i];
     }
     this.fft.compute(this.scratch);
     const power = this.fft.power;
 
-    const bands = this.bins.map((k) => power[k]);
-    let total = 0;
-    for (let k = 0; k < power.length; k++) total += power[k];
-    let band = 0;
-    for (const p of bands) band += p;
-    const concentration = band / (total + EPS);
+    // Total over the audio band only — excluding DC/hum/rumble below lowCutBin,
+    // which would otherwise inflate the denominator and depress `concentration`
+    // on a real line input (synthetic test signals are DC-free, so this matters
+    // only on hardware).
+    let totalEnergy = 0;
+    for (let k = this.lowCutBin; k < power.length; k++) totalEnergy += power[k];
+    let bandEnergy = 0;
+    for (let i = 0; i < this.bins.length; i++) {
+      const p = power[this.bins[i]];
+      this.bands[i] = p;
+      bandEnergy += p;
+    }
+    const concentration = bandEnergy / (totalEnergy + EPS);
 
-    const suggested = this.floor.suggest();
-    const floors = noiseFloor.map((configured, i) =>
-      configured > 0 ? configured : (suggested[i] ?? 0),
-    );
+    // Only run the (sorting) floor estimate when a band is actually auto-floored.
+    const suggested = this.hasAutoFloor ? this.floor.suggest() : null;
+    for (let i = 0; i < noiseFloor.length; i++) {
+      this.floors[i] = noiseFloor[i] > 0 ? noiseFloor[i] : (suggested?.[i] ?? 0);
+    }
 
-    const minBand = total * this.opts.perBandMinShare;
-    const allTonesPresent = bands.every((p, i) => p > floors[i] && p >= minBand);
+    const minBand = totalEnergy * this.opts.perBandMinShare;
+    let allTonesPresent = true;
+    for (let i = 0; i < this.bands.length; i++) {
+      if (this.bands[i] <= this.floors[i] || this.bands[i] < minBand) {
+        allTonesPresent = false;
+        break;
+      }
+    }
     const present = concentration > concentrationThreshold && allTonesPresent;
 
     // Learn the floor only from windows that clearly are not the chord.
-    if (concentration < concentrationThreshold * 0.5) {
-      this.floor.observe(bands);
+    if (this.hasAutoFloor && concentration < concentrationThreshold * 0.5) {
+      this.floor.observe(this.bands);
     }
 
     const t = this.total / fs;
-    this.onWindow?.({ t, bands, concentration, floors, present });
+    if (this.onWindow) {
+      this.result.t = t;
+      this.result.concentration = concentration;
+      this.result.present = present;
+      this.onWindow(this.result);
+    }
     this.runStateMachine(present, t, hop, fs);
   }
 
   private runStateMachine(present: boolean, t: number, hop: number, fs: number): void {
-    const { kConsecutive, releaseWindows, refractoryMs } = this.opts;
+    const { kConsecutive, releaseWindows, refractoryMs, maxChordMs } = this.opts;
     if (present) {
       this.hotStreak++;
       this.coldStreak = 0;
       if (!this.active && this.hotStreak >= kConsecutive && t >= this.refractoryUntil) {
         this.active = true;
-        const onsetT = t - ((kConsecutive - 1) * hop) / fs;
-        this.onEvent?.({ type: "onset", t: onsetT });
+        this.activeOnsetT = t - ((kConsecutive - 1) * hop) / fs;
+        this.onEvent?.({ type: "onset", t: this.activeOnsetT });
+      } else if (this.active && t - this.activeOnsetT > maxChordMs / 1000) {
+        // Watchdog: a chord stuck "present" forever would otherwise wedge the
+        // gesture decoder. Force a release so the pipeline self-heals.
+        this.closeChord(t, refractoryMs);
       }
     } else {
       this.coldStreak++;
       this.hotStreak = 0;
       if (this.active && this.coldStreak >= releaseWindows) {
-        this.active = false;
-        this.refractoryUntil = t + refractoryMs / 1000;
-        this.onEvent?.({ type: "release", t });
+        this.closeChord(t, refractoryMs);
       }
     }
+  }
+
+  private closeChord(t: number, refractoryMs: number): void {
+    this.active = false;
+    this.refractoryUntil = t + refractoryMs / 1000;
+    this.onEvent?.({ type: "release", t });
   }
 }

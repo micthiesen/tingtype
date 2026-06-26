@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
+import { parseKeySpec } from "./actions.js";
 import type { DetectorOptions } from "./dsp/detect.js";
 import { isPowerOfTwo } from "./dsp/fft.js";
 import type { GestureOptions } from "./gesture.js";
@@ -24,6 +25,7 @@ const rawSchema = z.object({
       noise_floor: z.array(z.number().min(0)).default([0, 0, 0]),
       release_windows: z.number().int().positive().default(2),
       refractory_ms: z.number().min(0).default(200),
+      max_chord_ms: z.number().positive().default(5000),
     })
     .prefault({}),
   gesture: z
@@ -58,6 +60,18 @@ export function normalizeAppConfig(raw: unknown): AppConfig {
     throw new Error("detector.hop must be <= detector.window");
   }
 
+  // Fail fast on a bad keyspec at load time rather than on the first gesture.
+  for (const [name, spec] of [
+    ["actions.tap", c.actions.tap],
+    ["actions.hold", c.actions.hold],
+  ] as const) {
+    try {
+      parseKeySpec(spec);
+    } catch (err) {
+      throw new Error(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Match the floor array to the tone count (pad with 0 => auto-estimate).
   const floors = c.detector.tones.map((_, i) => c.detector.noise_floor[i] ?? 0);
 
@@ -74,6 +88,7 @@ export function normalizeAppConfig(raw: unknown): AppConfig {
       noiseFloor: floors,
       releaseWindows: c.detector.release_windows,
       refractoryMs: c.detector.refractory_ms,
+      maxChordMs: c.detector.max_chord_ms,
     },
     gesture: { holdMs: c.gesture.hold_ms, refractoryMs: c.gesture.refractory_ms },
     actions: { tap: c.actions.tap, hold: c.actions.hold },
@@ -85,6 +100,19 @@ export function loadAppConfig(path: string): AppConfig {
   if (!existsSync(path)) {
     return normalizeAppConfig({});
   }
-  const raw = parseToml(readFileSync(path, "utf8"));
-  return normalizeAppConfig(raw);
+  let raw: unknown;
+  try {
+    raw = parseToml(readFileSync(path, "utf8"));
+  } catch (err) {
+    throw new Error(
+      `Failed to parse config ${path}: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+  try {
+    return normalizeAppConfig(raw);
+  } catch (err) {
+    throw new Error(
+      `Invalid config ${path}: ${err instanceof Error ? err.message : err}`,
+    );
+  }
 }

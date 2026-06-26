@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Resolve through symlinks (this is symlinked into ~/.local/bin by install.sh).
 REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-BUN="${BUN:-$HOME/.bun/bin/bun}"
-[ -x "$BUN" ] || BUN="$(command -v bun)"
+source "$REPO_DIR/scripts/_common.sh"
+BUN="$(resolve_bun)" || { echo "bun not found" >&2; exit 127; }
 
 cmd="${1:-}"
 

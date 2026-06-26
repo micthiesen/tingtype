@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-
-SERVICE_ID="com.tingtype.daemon"
-DOMAIN="gui/$(id -u)"
-LOG_FILE="$(cd "$(dirname "$0")/.." && pwd)/logs/tingtype.log"
+source "$(dirname "$0")/_common.sh"
 
 print_status() {
   echo "=== tingtype Service Status ==="
   echo ""
-  if launchctl print "$DOMAIN/$SERVICE_ID" &>/dev/null; then
+  if is_loaded; then
     PID=$(launchctl print "$DOMAIN/$SERVICE_ID" 2>/dev/null | grep -m1 'pid =' | awk '{print $3}')
     if [ -n "$PID" ] && [ "$PID" != "0" ]; then
       echo "  Status:  RUNNING (pid $PID)"
@@ -16,12 +13,10 @@ print_status() {
     else
       echo "  Status:  REGISTERED (not running)"
     fi
+  elif [ -f "$PLIST_PATH" ]; then
+    echo "  Status:  STOPPED"
   else
-    if [ -f "$HOME/Library/LaunchAgents/$SERVICE_ID.plist" ]; then
-      echo "  Status:  STOPPED"
-    else
-      echo "  Status:  NOT INSTALLED"
-    fi
+    echo "  Status:  NOT INSTALLED"
   fi
   echo ""
   echo "=== Recent Logs ==="

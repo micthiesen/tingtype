@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SERVICE_ID="com.tingtype.daemon"
-PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_ID.plist"
-LOG_DIR="$REPO_DIR/logs"
+source "$(dirname "$0")/_common.sh"
 
 mkdir -p "$LOG_DIR"
 cd "$REPO_DIR"
@@ -13,8 +10,7 @@ cd "$REPO_DIR"
 mkdir -p ~/.local/bin
 ln -sf "$REPO_DIR/tingtype" ~/.local/bin/tingtype
 
-BUN="${BUN:-$HOME/.bun/bin/bun}"
-[ -x "$BUN" ] || BUN="$(command -v bun)"
+BUN="$(resolve_bun)" || { echo "bun not found" >&2; exit 127; }
 echo "Using Bun: $BUN ($("$BUN" --version))"
 "$BUN" install
 
@@ -33,9 +29,9 @@ cat > "$PLIST_PATH" <<EOF
   <key>WorkingDirectory</key>
   <string>$REPO_DIR</string>
   <key>StandardOutPath</key>
-  <string>$LOG_DIR/tingtype.log</string>
+  <string>$LOG_FILE</string>
   <key>StandardErrorPath</key>
-  <string>$LOG_DIR/tingtype.log</string>
+  <string>$LOG_FILE</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -49,14 +45,16 @@ cat > "$PLIST_PATH" <<EOF
 </plist>
 EOF
 
-# Load the plist if not already registered, then (re)start.
-if ! launchctl print "gui/$(id -u)/$SERVICE_ID" &>/dev/null; then
-  launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH"
+# Reload so a changed plist (e.g. moved repo) actually takes effect — kickstart
+# alone re-reads the loaded definition, not the file.
+if is_loaded; then
+  launchctl bootout "$DOMAIN/$SERVICE_ID" 2>/dev/null || true
 fi
-launchctl kickstart -k "gui/$(id -u)/$SERVICE_ID"
+launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
+launchctl kickstart -k "$DOMAIN/$SERVICE_ID"
 
 echo "Service installed and started."
-echo "  Logs:    $LOG_DIR/tingtype.log  (tingtype logs)"
+echo "  Logs:    $LOG_FILE  (tingtype logs)"
 echo "  Status:  tingtype status"
 echo "  Stop:    tingtype stop"
 echo ""

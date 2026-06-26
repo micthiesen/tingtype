@@ -2,10 +2,10 @@
 # Invoked by launchd. Runs the daemon straight from TypeScript source (no build).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+source "$(dirname "$0")/_common.sh"
+cd "$REPO_DIR"
 
-BUN="${BUN:-$HOME/.bun/bin/bun}"
-[ -x "$BUN" ] || BUN="$(command -v bun)"
+BUN="$(resolve_bun)" || { echo "bun not found (looked in ~/.bun, /opt/homebrew, /usr/local, PATH)" >&2; exit 127; }
 
 # Bun auto-loads .env from the working directory.
 exec "$BUN" src/cli.ts run

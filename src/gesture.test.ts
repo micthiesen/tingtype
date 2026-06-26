@@ -62,4 +62,17 @@ describe("GestureDecoder", () => {
     g.release(1.1); // tap
     expect(fired).toEqual(["hold", "tap"]);
   });
+
+  it("routes detector events through handle() (the production seam)", () => {
+    const { g, fired } = decoder(400, 250);
+    g.handle({ type: "onset", t: 0 });
+    g.handle({ type: "release", t: 0.15 });
+    expect(fired).toEqual(["tap"]);
+  });
+
+  it("ignores a release with no matching onset", () => {
+    const { g, fired } = decoder();
+    g.release(0.1);
+    expect(fired).toEqual([]);
+  });
 });
