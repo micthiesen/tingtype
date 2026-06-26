@@ -29,7 +29,9 @@ Commands:
 gen options:
   --out PATH          Output path (default: signature.wav)
   --tones a,b,c       Override tones in Hz (default: config tones)
-  --duration-ms N     Sample duration (default: 150)
+  --duration-ms N     Approx sample duration (default: 1000; snapped for seamless loop)
+  --peak P            Sample amplitude 0-1 (default: 0.25; lower = quieter)
+  --no-loop           Faded one-shot instead of a seamless loop (offline testing)
 
 Service management (see scripts/): install, start, stop, restart, deploy, status, logs, kill`);
 }
@@ -161,22 +163,36 @@ function cmdGen(app: AppConfig, args: Args): void {
     );
   }
 
-  const durationMs = args.number("duration-ms") ?? 150;
+  const durationMs = args.number("duration-ms") ?? 1000;
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
     throw new Error(
       `--duration-ms must be a positive number, got "${args.string("duration-ms")}"`,
     );
   }
 
+  const peak = args.number("peak") ?? 0.25;
+  if (!Number.isFinite(peak) || peak <= 0 || peak > 1) {
+    throw new Error(`--peak must be in (0, 1], got "${args.string("peak")}"`);
+  }
+  // Loop by default: the ting plays the sample in hold/loop playmode, so it must
+  // tile seamlessly. --no-loop produces a faded one-shot for offline testing.
+  const loop = args.string("no-loop") === undefined;
+
   const result = synthesizeSignature({
     tones,
     durationMs,
     fs: app.audio.sampleRate,
     window: app.detector.window,
+    peak,
+    loop,
   });
   writeFileSync(out, encodeWavMono16(result.samples, result.sampleRate));
 
-  console.log(`Wrote ${out} (${durationMs}ms, ${result.sampleRate}Hz, 16-bit mono).`);
+  const actualMs = ((result.samples.length / result.sampleRate) * 1000).toFixed(0);
+  console.log(
+    `Wrote ${out} (${actualMs}ms, ${result.sampleRate}Hz, 16-bit mono, peak ${peak}` +
+      `${loop ? ", seamless loop" : ""}).`,
+  );
   console.log("Tones snapped to bin centers:");
   for (const t of result.tones) {
     console.log(`  ${t.requested}Hz → ${t.snapped.toFixed(2)}Hz (bin ${t.bin})`);
