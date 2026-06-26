@@ -16,17 +16,20 @@ concentration_threshold = 0.5    # fraction of one-sided spectral energy in the 
 per_band_min_share      = 0.08   # min share of energy each tone must carry (rejects single tones)
 noise_floor             = [0, 0, 0]  # per-band power floor; 0 => auto-estimate at runtime
 release_windows         = 4      # cold windows required to close a chord (bridges brief dropouts)
-refractory_ms           = 200    # ignore re-onsets for this long after a release
+refractory_ms           = 0      # 0 so a double-tap's 2nd onset isn't swallowed (gesture bridges)
 max_chord_ms            = 5000   # watchdog: force a release if a chord sticks this long
 
 [gesture]
-# Short press fires `tap`; a sustained chord fires `hold` the instant it crosses
-# hold_ms (it does NOT wait for release). The ting sample must use hold/loop
-# playmode so the chord sustains while the white button is held.
-hold_ms      = 400
-refractory_ms = 250
+# A single short tap fires `primary`. `secondary` fires on EITHER a hold (tone
+# present >= hold_ms, firing the instant it crosses — not on release) OR a
+# double-tap (a 2nd onset within bridge_ms). bridge_ms is also the debounce
+# buffer: a lone tap commits `primary` bridge_ms after the tone ends, so keep it
+# tight. The ting sample must use hold/loop playmode so the tone sustains while
+# the white button is held.
+hold_ms   = 400
+bridge_ms = 200
 
 [actions]
 # Keyspecs: "mod+mod+key". mods = cmd | shift | ctrl | opt/alt | fn.
-tap  = "ctrl+opt+space"   # short press
-hold = "return"           # long hold (Enter)
+primary   = "ctrl+opt+space"   # single short tap
+secondary = "return"           # hold or double-tap (Enter)

@@ -20,8 +20,9 @@ describe("normalizeAppConfig", () => {
     expect(c.detector.tones).toEqual([2016, 2484, 3141]);
     expect(c.detector.fs).toBe(48000);
     expect(c.gesture.holdMs).toBe(400);
-    expect(c.actions.tap).toBe("ctrl+opt+space");
-    expect(c.actions.hold).toBe("return");
+    expect(c.gesture.bridgeMs).toBe(200);
+    expect(c.actions.primary).toBe("ctrl+opt+space");
+    expect(c.actions.secondary).toBe("return");
   });
 
   it("propagates the sample rate into the detector", () => {

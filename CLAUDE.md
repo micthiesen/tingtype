@@ -2,7 +2,7 @@
 
 A macOS daemon that detects a self-authored acoustic chord from a Teenage
 Engineering *ting* (on a line input) and synthesizes keypresses: short press →
-`ctrl+opt+space`, long hold → Enter (fires at the hold threshold, not on release).
+`ctrl+opt+space` (primary); a hold or double-tap → Enter (secondary).
 
 **This is a living document — update it as conventions emerge; don't ask, just update.**
 
@@ -36,7 +36,7 @@ src/
   cli.ts            # entrypoint: run / monitor / devices / gen / test + daemon lifecycle
   config.ts         # env config (mitools Injector): LOG_LEVEL, PUSHOVER, TINGTYPE_CONFIG
   appConfig.ts      # config.toml tuning (audio/detector/gesture/actions) → typed AppConfig
-  gesture.ts        # tap-vs-hold timing state machine (pure; injected clock)
+  gesture.ts        # span timing machine: tap→primary, hold/double-tap→secondary (pure)
   actions.ts        # keyspec parse + cliclick dispatch (pure parse, impure spawn)
   audio/
     devices.ts      # avfoundation device listing + substring resolve (pure parser)

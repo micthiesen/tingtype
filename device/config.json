@@ -7,9 +7,9 @@
     { "file": "4.wav", "playmode": "hold" }
   ],
   "presets": [
-    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] },
-    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] },
-    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] },
-    { "name": "DRY", "list": [{ "effect": "SAMPLE" }] }
+    { "pos": 0, "name": "DRY", "list": [{ "effect": "SAMPLE" }], "trigger": { "row": 0 } },
+    { "pos": 1, "name": "DRY", "list": [{ "effect": "SAMPLE" }], "trigger": { "row": 0 } },
+    { "pos": 2, "name": "DRY", "list": [{ "effect": "SAMPLE" }], "trigger": { "row": 0 } },
+    { "pos": 3, "name": "DRY", "list": [{ "effect": "SAMPLE" }], "trigger": { "row": 0 } }
   ]
 }

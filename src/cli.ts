@@ -43,16 +43,15 @@ function buildPipeline(app: AppConfig, presser: KeyPresser) {
   });
 
   gesture.onGesture = (g) => {
-    const spec = g === "tap" ? app.actions.tap : app.actions.hold;
+    const spec = g === "primary" ? app.actions.primary : app.actions.secondary;
     logger.info(`Gesture ${g} → ${spec}`);
     presser.press(spec);
   };
   detector.onEvent = (e) => gesture.handle(e);
-  // Only age the hold timer while the chord is actually present; ticking on the
-  // trailing cold windows would let a released tap cross the hold threshold.
-  detector.onWindow = (w) => {
-    if (w.present) gesture.tick(w.t);
-  };
+  // Tick every window (present or not) so the bridge timer can commit a primary
+  // during silence; presence is passed so the hold timer only accrues while the
+  // tone is genuinely on.
+  detector.onWindow = (w) => gesture.tick(w.t, w.present);
   supervisor.onSamples = (s) => detector.feed(s);
 
   return { detector, gesture, supervisor };
@@ -72,7 +71,7 @@ async function cmdRun(app: AppConfig): Promise<void> {
 
   logger.info(
     `Listening on "${app.audio.inputDevice}" — tones ${app.detector.tones.join("/")} Hz; ` +
-      `tap → ${app.actions.tap}, hold(${app.gesture.holdMs}ms) → ${app.actions.hold}`,
+      `tap → ${app.actions.primary}, hold(${app.gesture.holdMs}ms)/double-tap → ${app.actions.secondary}`,
   );
 
   let shuttingDown = false;

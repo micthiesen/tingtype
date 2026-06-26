@@ -23,21 +23,23 @@ const rawSchema = z.object({
       concentration_threshold: z.number().min(0).max(1).default(0.5),
       per_band_min_share: z.number().min(0).max(1).default(0.08),
       noise_floor: z.array(z.number().min(0)).default([0, 0, 0]),
-      release_windows: z.number().int().positive().default(2),
-      refractory_ms: z.number().min(0).default(200),
+      release_windows: z.number().int().positive().default(4),
+      // 0 by default so a double-tap's second onset isn't swallowed; the gesture
+      // layer's bridge window handles merging.
+      refractory_ms: z.number().min(0).default(0),
       max_chord_ms: z.number().positive().default(5000),
     })
     .prefault({}),
   gesture: z
     .object({
       hold_ms: z.number().positive().default(400),
-      refractory_ms: z.number().min(0).default(250),
+      bridge_ms: z.number().min(0).default(200),
     })
     .prefault({}),
   actions: z
     .object({
-      tap: z.string().default("ctrl+opt+space"),
-      hold: z.string().default("return"),
+      primary: z.string().default("ctrl+opt+space"),
+      secondary: z.string().default("return"),
     })
     .prefault({}),
 });
@@ -46,7 +48,7 @@ export interface AppConfig {
   audio: { inputDevice: string; sampleRate: number };
   detector: DetectorOptions;
   gesture: GestureOptions;
-  actions: { tap: string; hold: string };
+  actions: { primary: string; secondary: string };
 }
 
 /** Validate a parsed TOML object and normalize it into a typed {@link AppConfig}. */
@@ -62,8 +64,8 @@ export function normalizeAppConfig(raw: unknown): AppConfig {
 
   // Fail fast on a bad keyspec at load time rather than on the first gesture.
   for (const [name, spec] of [
-    ["actions.tap", c.actions.tap],
-    ["actions.hold", c.actions.hold],
+    ["actions.primary", c.actions.primary],
+    ["actions.secondary", c.actions.secondary],
   ] as const) {
     try {
       parseKeySpec(spec);
@@ -90,8 +92,8 @@ export function normalizeAppConfig(raw: unknown): AppConfig {
       refractoryMs: c.detector.refractory_ms,
       maxChordMs: c.detector.max_chord_ms,
     },
-    gesture: { holdMs: c.gesture.hold_ms, refractoryMs: c.gesture.refractory_ms },
-    actions: { tap: c.actions.tap, hold: c.actions.hold },
+    gesture: { holdMs: c.gesture.hold_ms, bridgeMs: c.gesture.bridge_ms },
+    actions: { primary: c.actions.primary, secondary: c.actions.secondary },
   };
 }
 

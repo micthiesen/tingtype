@@ -1,30 +1,45 @@
 import type { DetectionEvent } from "./dsp/detect.js";
 
-export type Gesture = "tap" | "hold";
+export type Gesture = "primary" | "secondary";
 
 export interface GestureOptions {
-  /** A chord sustained at least this long fires `hold` (the instant it crosses, not on release). */
+  /**
+   * A tone held continuously for at least this long (ms) fires `secondary`
+   * immediately — the instant it crosses, not on release.
+   */
   holdMs: number;
-  /** Swallow re-triggers for this long after a gesture fires. */
-  refractoryMs: number;
+  /**
+   * Bridge/debounce gap (ms). Silence shorter than this keeps the current "span"
+   * open: a second tone onset within it is a double-tap → `secondary`; a lone tap
+   * commits `primary` once this elapses with no second onset. Keep it tight so a
+   * deliberate double-tap registers while a single tap stays responsive.
+   */
+  bridgeMs: number;
 }
 
-type State = { kind: "idle" } | { kind: "pending"; onsetT: number } | { kind: "held" };
+type State =
+  | { kind: "idle" }
+  | { kind: "active"; spanStartT: number } // tone on, span open, not yet promoted
+  | { kind: "gap"; releaseT: number } // tone off, span open, not yet promoted
+  | { kind: "done"; releaseT: number | null }; // secondary fired; draining the span
 
 /**
- * Tap-vs-hold timing machine. A short chord (onset then release before `holdMs`)
- * fires `tap`; a sustained chord fires `hold` the moment its duration crosses
- * `holdMs` — it does not wait for release. Drive {@link tick} from a steady clock
- * (the detector ticks it every analysis window) so `hold` can fire mid-sustain.
+ * Span-based gesture decoder. One physical "span" of tone activity (bridging
+ * silence gaps shorter than `bridgeMs`) maps to one gesture:
  *
- * All timing is in seconds and injected, so tests run deterministically with no
- * real sleeps.
+ *   - `primary`   — a single short tap (no second onset, never held to `holdMs`).
+ *                   Commits `bridgeMs` after the tone ends.
+ *   - `secondary` — fires early on EITHER a hold (tone present ≥ `holdMs`) OR a
+ *                   double-tap (a second onset within the bridge window).
+ *
+ * Driven by debounced onset/release events plus a presence-aware {@link tick}
+ * from the analysis clock. All timing is injected seconds, so tests are
+ * deterministic with no real sleeps.
  */
 export class GestureDecoder {
   onGesture: ((gesture: Gesture) => void) | null = null;
 
   private state: State = { kind: "idle" };
-  private refractoryUntil = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly opts: GestureOptions) {}
 
@@ -35,32 +50,49 @@ export class GestureDecoder {
   }
 
   onset(t: number): void {
-    if (this.state.kind !== "idle") return;
-    if (t < this.refractoryUntil) return;
-    this.state = { kind: "pending", onsetT: t };
+    switch (this.state.kind) {
+      case "idle":
+        this.state = { kind: "active", spanStartT: t };
+        break;
+      case "gap":
+        // Second onset within the bridge window → double-tap → secondary.
+        this.onGesture?.("secondary");
+        this.state = { kind: "done", releaseT: null };
+        break;
+      // active / done: a stray onset inside the span is swallowed.
+    }
   }
 
   release(t: number): void {
-    if (this.state.kind === "pending") {
-      this.fire("tap", t);
-    } else if (this.state.kind === "held") {
-      // Hold already fired; the release just closes the gesture.
-      this.state = { kind: "idle" };
-    }
+    if (this.state.kind === "active") this.state = { kind: "gap", releaseT: t };
+    else if (this.state.kind === "done") this.state = { kind: "done", releaseT: t };
   }
 
-  /** Advance the clock; fires `hold` once the pending chord crosses `holdMs`. */
-  tick(now: number): void {
-    if (this.state.kind !== "pending") return;
-    if (now - this.state.onsetT >= this.opts.holdMs / 1000) {
-      this.fire("hold", now);
-      this.state = { kind: "held" };
+  /**
+   * Advance the clock. `present` is the detector's current presence; the hold
+   * timer only accrues while the tone is genuinely present, so the release
+   * debounce window can't age a short tap into a hold.
+   */
+  tick(now: number, present: boolean): void {
+    const bridge = this.opts.bridgeMs / 1000;
+    switch (this.state.kind) {
+      case "active":
+        if (present && now - this.state.spanStartT >= this.opts.holdMs / 1000) {
+          this.onGesture?.("secondary");
+          this.state = { kind: "done", releaseT: null };
+        }
+        break;
+      case "gap":
+        if (now - this.state.releaseT >= bridge) {
+          this.onGesture?.("primary");
+          this.state = { kind: "idle" };
+        }
+        break;
+      case "done":
+        if (this.state.releaseT !== null && now - this.state.releaseT >= bridge) {
+          this.state = { kind: "idle" };
+        }
+        break;
     }
-  }
-
-  private fire(gesture: Gesture, t: number): void {
-    if (gesture === "tap") this.state = { kind: "idle" };
-    this.refractoryUntil = t + this.opts.refractoryMs / 1000;
-    this.onGesture?.(gesture);
   }
 }

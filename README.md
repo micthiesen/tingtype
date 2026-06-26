@@ -6,14 +6,18 @@ A macOS daemon that listens to a [Teenage Engineering EP–2350 *ting*](https://
 on a line input, detects a self-authored acoustic signature when you press the
 white sample button, and synthesizes keypresses:
 
-- **Short press** → `ctrl+opt+space`
-- **Long hold** → `Enter` (fires the instant the hold threshold is crossed, not on release)
+- **Single tap** → `ctrl+opt+space` (primary)
+- **Hold _or_ double-tap** → `Enter` (secondary)
 
-One physical button drives both actions; tap vs. hold is decoded in software from
-the *duration* of the chord the ting plays. The signature is a short 3-tone chord;
-detection is a Goertzel/FFT filter bank at those exact frequencies, so it shrugs
-off the ting's lo-fi DAC, the interface's ADC, and level drift, and effectively
-never false-fires on speech.
+One physical button drives both actions, decoded in software from the *duration*
+and *count* of the tone the ting plays. A lone short tap is the primary; the
+secondary fires on either a sustained hold (the instant it crosses the hold
+threshold — not on release) or a quick double-tap. Brief gaps shorter than the
+bridge window are merged, so a double-tap reads as one gesture. The signature is
+a sustained 3-tone chord; detection is an FFT filter bank at those exact
+frequencies, so it shrugs off the ting's lo-fi DAC, the interface's ADC, and
+level drift (it's level-independent — robust even to overlapping tones), and
+effectively never false-fires on speech.
 
 ## How it works
 
@@ -21,8 +25,8 @@ never false-fires on speech.
 CUBILUX Line IN  →  ffmpeg (avfoundation, 48k mono f32)  →  Detector (FFT bank)
                                                               │ onset / release
                                                               ▼
-                                              GestureDecoder (tap vs hold)
-                                                              │ tap / hold
+                                       GestureDecoder (span: tap / hold / double-tap)
+                                                              │ primary / secondary
                                                               ▼
                                                  cliclick (CGEvent keypress)
 ```
@@ -71,9 +75,11 @@ If the ting rolls off the top tone, lower the `tones` and regenerate.
 
 Key gesture knobs:
 
-- `hold_ms` (default 400) — a chord sustained this long fires `hold`.
-- A quick tap must be **shorter** than `hold_ms`; the ~150ms sample gives clean
-  separation. Raise `hold_ms` if quick taps occasionally register as holds.
+- `hold_ms` (default 400) — a tone sustained this long fires `secondary`.
+- `bridge_ms` (default 200) — debounce buffer + double-tap window. A lone tap
+  commits `primary` this long after the tone ends; a second onset within it is a
+  double-tap (→ `secondary`). Keep it tight so single taps stay responsive while
+  real double-taps still register.
 
 ## macOS permissions (the classic footguns)
 
