@@ -1,6 +1,30 @@
 # tingtype — status & handoff
 
-_Last updated: 2026-06-26. Read this first when picking the project back up._
+_Last updated: 2026-06-27. Read this first when picking the project back up._
+
+## Cross-platform port (Linux) — 2026-06-27
+
+The daemon now runs on **Linux as well as macOS** (CachyOS / KDE Wayland is the
+target box). The two impure edges and the service layer dispatch on
+`process.platform` / `uname`:
+
+- **Audio:** `ffmpeg -f pulse` via PipeWire's PulseAudio compat; `pactl list
+  sources` enumerates devices (`tingtype devices` verified working). Substring
+  match now also checks the pulse source id, so `cubilux`/`line` will resolve once
+  the real device is plugged in.
+- **Keypresses:** `ydotool` (kernel `uinput`, compositor-agnostic). `actions.ts`
+  maps the keyspec vocabulary → Linux input-event-codes. `ydotoold` must be
+  running (`tingtype install` enables `ydotool.service`); michael already has a
+  `/dev/uinput` ACL.
+- **Service:** `scripts/_common.sh` defines `svc_*` functions per-OS — systemd
+  `--user` unit on Linux (logs → journald), launchd on macOS. Same `tingtype
+  install/start/stop/restart/status/logs/kill` verbs.
+- **Device load:** `device/load.sh` has a Linux branch (udisksctl mount + cp);
+  untested (no ting hardware on the Linux box yet).
+
+**Not yet done on Linux:** end-to-end test with the real CUBILUX line-in (it
+isn't plugged in yet) and a live `tingtype run`. Everything below this is the
+original macOS hardware/tuning context and still applies to the signal itself.
 
 ## TL;DR
 

@@ -2,7 +2,10 @@
 # Calibrate the detector against your actual signal with `tingtype monitor`.
 
 [audio]
-# Substring-matched against Core Audio input device names (see `tingtype devices`).
+# Substring-matched (case-insensitive) against input device names/ids — Core Audio
+# on macOS, PulseAudio/PipeWire sources on Linux. Run `tingtype devices` to see the
+# exact strings; on Linux the substring also matches the pulse source id (e.g.
+# "alsa_input.usb-CUBILUX…"), so "cubilux" or "line" usually suffices.
 input_device = "CUBILUX HLMS-C4 Line IN"
 samplerate   = 48000
 

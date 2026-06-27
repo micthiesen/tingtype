@@ -1,12 +1,17 @@
 import { Logger } from "@micthiesen/mitools/logging";
 import type { Subprocess } from "bun";
-import { listInputDevices, resolveDevice } from "./devices.js";
+import {
+  type AudioInputDevice,
+  ffmpegInputArgs,
+  listInputDevices,
+  resolveDevice,
+} from "./devices.js";
 import { PcmFramer } from "./pcm.js";
 
 const logger = new Logger("Audio");
 
 export interface CaptureOptions {
-  /** Substring matched against Core Audio input device names. */
+  /** Substring matched against input device names/ids (Core Audio or PulseAudio). */
   deviceSubstring: string;
   sampleRate: number;
   ffmpeg?: string;
@@ -66,7 +71,7 @@ export class CaptureSupervisor {
         logger.info(`Input device connected: ${device.name}`);
       }
 
-      const streamed = await this.streamFrom(device.name);
+      const streamed = await this.streamFrom(device);
       if (this.stopping) break;
 
       if (streamed) {
@@ -88,7 +93,7 @@ export class CaptureSupervisor {
   }
 
   /** Stream until ffmpeg exits. Returns true if any audio was received. */
-  private async streamFrom(deviceName: string): Promise<boolean> {
+  private async streamFrom(device: AudioInputDevice): Promise<boolean> {
     this.framer.reset();
     let received = false;
 
@@ -99,10 +104,7 @@ export class CaptureSupervisor {
           "-hide_banner",
           "-loglevel",
           "error",
-          "-f",
-          "avfoundation",
-          "-i",
-          `:${deviceName}`,
+          ...ffmpegInputArgs(device),
           "-ac",
           "1",
           "-ar",

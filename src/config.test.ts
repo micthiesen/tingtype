@@ -62,10 +62,10 @@ describe("avfoundation device parsing", () => {
   it("extracts only the audio devices", () => {
     const devices = parseAvfoundationDevices(stderr);
     expect(devices).toEqual([
-      { index: 0, name: "Insta360 Link" },
-      { index: 1, name: "CUBILUX HLMS-C4 MIC IN" },
-      { index: 2, name: "MacBook Pro Microphone" },
-      { index: 3, name: "CUBILUX HLMS-C4 Line IN" },
+      { index: 0, name: "Insta360 Link", id: "Insta360 Link" },
+      { index: 1, name: "CUBILUX HLMS-C4 MIC IN", id: "CUBILUX HLMS-C4 MIC IN" },
+      { index: 2, name: "MacBook Pro Microphone", id: "MacBook Pro Microphone" },
+      { index: 3, name: "CUBILUX HLMS-C4 Line IN", id: "CUBILUX HLMS-C4 Line IN" },
     ]);
   });
 

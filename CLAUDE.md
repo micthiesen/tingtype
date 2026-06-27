@@ -1,8 +1,15 @@
 # tingtype
 
-A macOS daemon that detects a self-authored acoustic chord from a Teenage
-Engineering *ting* (on a line input) and synthesizes keypresses: short press →
-`ctrl+opt+space` (primary); a hold or double-tap → Enter (secondary).
+A cross-platform daemon (macOS + Linux) that detects a self-authored acoustic
+chord from a Teenage Engineering *ting* (on a line input) and synthesizes
+keypresses: short press → `ctrl+opt+space` (primary); a hold or double-tap →
+Enter (secondary).
+
+The two impure edges are platform-dispatched at runtime via `process.platform`:
+audio capture is `ffmpeg -f avfoundation` (macOS) / `-f pulse` (Linux), and
+keypresses are `cliclick` (macOS) / `ydotool` (Linux). The service layer in
+`scripts/` likewise dispatches launchd vs systemd `--user`. The same TS and
+`config.toml` run on both.
 
 **This is a living document — update it as conventions emerge; don't ask, just update.**
 
@@ -37,9 +44,9 @@ src/
   config.ts         # env config (mitools Injector): LOG_LEVEL, PUSHOVER, TINGTYPE_CONFIG
   appConfig.ts      # config.toml tuning (audio/detector/gesture/actions) → typed AppConfig
   gesture.ts        # span timing machine: tap→primary, hold/double-tap→secondary (pure)
-  actions.ts        # keyspec parse + cliclick dispatch (pure parse, impure spawn)
+  actions.ts        # keyspec parse + cliclick/ydotool dispatch (pure parse, impure spawn)
   audio/
-    devices.ts      # avfoundation device listing + substring resolve (pure parser)
+    devices.ts      # avfoundation + pactl device listing, ffmpeg input args, resolve (pure parsers)
     capture.ts      # ffmpeg → f32 PCM supervisor; graceful disconnect/reconnect
   dsp/
     fft.ts          # radix-2 FFT + reusable scratch
@@ -49,14 +56,21 @@ src/
     wav.ts          # 16-bit PCM WAV encode/decode (mono)
 ```
 
-Pure core (`dsp/`, `gesture.ts`, keyspec parsing, device parsing) is unit-tested
-offline. Impure edges: `audio/capture.ts` (ffmpeg) and `actions.ts` (cliclick).
+Pure core (`dsp/`, `gesture.ts`, keyspec parsing, device parsing, ffmpeg-arg and
+ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
+`audio/capture.ts` (ffmpeg) and `actions.ts` (cliclick/ydotool).
 
 ## Hardware notes
 
-- Input device: **CUBILUX HLMS-C4 Line IN** (substring-matched in `config.toml`).
+- Input device: **CUBILUX HLMS-C4 Line IN** (substring-matched in `config.toml`,
+  against device name *or* backend id). USB line-in, hot-plugged often — the
+  capture supervisor treats a missing/dropped device as normal (polls + backoff).
 - The ting sample must use **hold/loop playmode** so a held button sustains the
   chord — that sustain is what `hold_ms` measures. Load the identical WAV into all
   four slots so a stray slot-select press can't change the sound.
-- Capture uses `ffmpeg -f avfoundation`; keypresses use `cliclick` (both via Homebrew).
-  Hammerspoon is also installed if a different key backend is ever wanted.
+- **macOS:** capture is `ffmpeg -f avfoundation`, keypresses `cliclick` (both via
+  Homebrew). Hammerspoon is also installed if a different key backend is wanted.
+- **Linux (this machine, CachyOS/KDE Wayland):** capture is `ffmpeg -f pulse`
+  (PipeWire's pulse compat; `pactl` enumerates sources), keypresses `ydotool`
+  (needs `ydotoold` running + `/dev/uinput` access). ydotool speaks raw keycodes,
+  so `actions.ts` maps the keyspec vocabulary to Linux input-event-codes.

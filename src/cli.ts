@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { Logger } from "@micthiesen/mitools/logging";
 import { notify } from "@micthiesen/mitools/pushover";
-import { CliclickPresser, type KeyPresser } from "./actions.js";
+import { createPresser, type KeyPresser } from "./actions.js";
 import { type AppConfig, loadAppConfig } from "./appConfig.js";
 import { CaptureSupervisor } from "./audio/capture.js";
 import { listInputDevices } from "./audio/devices.js";
@@ -22,7 +22,7 @@ Commands:
   run [--dry-run]     Start the detection → gesture → keypress daemon
                       (--dry-run logs gestures but fires no keystrokes)
   monitor             Live detector readout for tuning (no keypresses fired)
-  devices             List Core Audio input devices
+  devices             List audio input devices
   gen   [opts]        Synthesize the signature WAV to load onto the ting
   test  --wav PATH    Run a WAV through the detector offline and print events
 
@@ -71,7 +71,7 @@ async function cmdRun(app: AppConfig, dryRun: boolean): Promise<void> {
 
   // In dry-run, decode and log gestures but fire no keystrokes — for tuning the
   // gesture timing on real hardware without keys landing in your apps.
-  const presser: KeyPresser = dryRun ? { press: () => {} } : new CliclickPresser();
+  const presser: KeyPresser = dryRun ? { press: () => {} } : createPresser();
   const { supervisor } = buildPipeline(app, presser);
 
   logger.info(
@@ -145,10 +145,10 @@ async function cmdMonitor(app: AppConfig): Promise<void> {
 function cmdDevices(): void {
   const devices = listInputDevices();
   if (devices.length === 0) {
-    console.log("No Core Audio input devices found.");
+    console.log("No audio input devices found.");
     return;
   }
-  console.log("Core Audio input devices:");
+  console.log("Audio input devices:");
   for (const d of devices) console.log(`  [${d.index}] ${d.name}`);
 }
 

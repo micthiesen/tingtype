@@ -2,9 +2,10 @@
 
 > The ting types.
 
-A macOS daemon that listens to a [Teenage Engineering EP–2350 *ting*](https://teenage.engineering)
-on a line input, detects a self-authored acoustic signature when you press the
-white sample button, and synthesizes keypresses:
+A cross-platform daemon (macOS + Linux) that listens to a
+[Teenage Engineering EP–2350 *ting*](https://teenage.engineering) on a line
+input, detects a self-authored acoustic signature when you press the white sample
+button, and synthesizes keypresses:
 
 - **Single tap** → `ctrl+opt+space` (primary)
 - **Hold _or_ double-tap** → `Enter` (secondary)
@@ -22,24 +23,40 @@ effectively never false-fires on speech.
 ## How it works
 
 ```
-CUBILUX Line IN  →  ffmpeg (avfoundation, 48k mono f32)  →  Detector (FFT bank)
+Line IN  →  ffmpeg (avfoundation / pulse, 48k mono f32)  →  Detector (FFT bank)
                                                               │ onset / release
                                                               ▼
                                        GestureDecoder (span: tap / hold / double-tap)
                                                               │ primary / secondary
                                                               ▼
-                                                 cliclick (CGEvent keypress)
+                                          cliclick (macOS) / ydotool (Linux) keypress
 ```
 
 The detector and gesture decoder are pure and unit-tested offline; the ffmpeg
-capture and cliclick dispatch are the only impure edges.
+capture and the keypress dispatch are the only impure edges. Both edges are
+platform-dispatched at runtime (`process.platform`), so the same code and
+`config.toml` run on either OS.
 
 ## Requirements
 
 - [Bun](https://bun.sh) ≥ 1.3
-- `ffmpeg` (audio capture) and `cliclick` (keypresses): `brew install ffmpeg cliclick`
-- The ting's 3.5mm **line out** into a line input that shows up as a Core Audio
-  device (here: *CUBILUX HLMS-C4 Line IN*). The MacBook combo jack is not a valid source.
+- The ting's 3.5mm **line out** into a line input that shows up as an audio input
+  device (here: *CUBILUX HLMS-C4 Line IN*). A laptop's combo jack is not a valid source.
+
+**macOS:**
+
+- `ffmpeg` (audio capture via avfoundation) and `cliclick` (keypresses):
+  `brew install ffmpeg cliclick`
+
+**Linux (PipeWire/PulseAudio + a Wayland or X11 session):**
+
+- `ffmpeg` (audio capture via the pulse demuxer) and `pulseaudio`/`pipewire-pulse`
+  for `pactl` device enumeration — both present on a stock PipeWire desktop.
+- `ydotool` + `ydotoold` for keypresses. ydotool injects at the kernel `uinput`
+  layer, so it works under any Wayland compositor (KDE, GNOME, wlroots) as well as
+  X11. The `ydotool install` step enables `ydotool.service`; the user also needs
+  access to `/dev/uinput` (be in the `input` group or have a uinput udev ACL).
+  Install on Arch/CachyOS: `paru -S ydotool`.
 
 ## Quick start
 
@@ -81,7 +98,9 @@ Key gesture knobs:
   double-tap (→ `secondary`). Keep it tight so single taps stay responsive while
   real double-taps still register.
 
-## macOS permissions (the classic footguns)
+## Permissions / setup gotchas
+
+**macOS (the classic footguns):**
 
 - **Microphone (TCC):** the process needs mic access to open the input device.
   Running `tingtype monitor` / `run` from a terminal triggers the prompt; the
@@ -89,21 +108,30 @@ Key gesture knobs:
 - **Accessibility:** `cliclick` posts CGEvents, which requires the process (or its
   parent terminal) under System Settings → Privacy & Security → **Accessibility**.
   Without it, detection works but **no keys land, with no error.** This is the #1
-  "why isn't it typing" cause.
+  "why isn't it typing" cause. For the launchd daemon, grant these to the binary
+  that runs it (Bun).
 
-For the launchd daemon, grant these to the binary that runs it (Bun). The simplest
-path: get it working under `tingtype run` in a terminal first (grant both prompts),
-then `tingtype install`.
+**Linux:**
+
+- **`ydotoold` must be running** and able to open `/dev/uinput`. `tingtype install`
+  runs `systemctl --user enable --now ydotool.service`; if keys never land, check
+  `systemctl --user status ydotool` and that your user can access `/dev/uinput`.
+  This is the Linux equivalent of the "detects but doesn't type" footgun.
+- The service runs under your **graphical login session** (`default.target`), which
+  is what ydotool injection needs. No special microphone permission exists.
 
 ## Service management
 
 ```bash
-tingtype install   # symlink CLI + install & start the launchd agent (RunAtLoad, KeepAlive)
+tingtype install   # symlink CLI + install & start the service (launchd / systemd --user)
 tingtype status    # running? + recent logs
-tingtype logs      # tail the log
+tingtype logs      # tail the log (file on macOS, journald on Linux)
 tingtype restart   # pick up config/code changes (no build step)
-tingtype stop      # unload the agent
+tingtype stop      # stop the service
 ```
+
+The same verbs drive **launchd** on macOS and a **systemd user service** on Linux;
+`scripts/_common.sh` dispatches per-OS.
 
 The daemon treats a **disconnected input device as a normal state**: if the
 interface is unplugged it waits and polls for it to come back; if a live stream
@@ -115,6 +143,6 @@ drops it reconnects with backoff. It never crashes on device loss.
 | --- | --- |
 | `tingtype run` | Start the detect → gesture → keypress pipeline |
 | `tingtype monitor` | Live band/concentration/floor readout for tuning (no keypresses) |
-| `tingtype devices` | List Core Audio input devices |
+| `tingtype devices` | List audio input devices (Core Audio / PulseAudio) |
 | `tingtype gen [--out PATH] [--tones a,b,c] [--duration-ms N]` | Synthesize the signature WAV |
 | `tingtype test [--wav PATH]` | Run a WAV (or a synthesized chord) through the detector offline |

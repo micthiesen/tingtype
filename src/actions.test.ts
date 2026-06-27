@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseKeySpec, toCliclickArgs } from "./actions.js";
+import { parseKeySpec, toCliclickArgs, toYdotoolArgs } from "./actions.js";
 
 describe("parseKeySpec", () => {
   it("maps opt/alt to alt and recognizes named keys", () => {
@@ -70,5 +70,38 @@ describe("toCliclickArgs", () => {
 
   it("uses t: for typed characters", () => {
     expect(toCliclickArgs(parseKeySpec("cmd+a"))).toEqual(["kd:cmd", "t:a", "ku:cmd"]);
+  });
+});
+
+describe("toYdotoolArgs", () => {
+  it("presses modifiers, taps the key, then releases in reverse", () => {
+    // ctrl=29, alt=56, space=57
+    expect(toYdotoolArgs(parseKeySpec("ctrl+opt+space"))).toEqual([
+      "29:1",
+      "56:1",
+      "57:1",
+      "57:0",
+      "56:0",
+      "29:0",
+    ]);
+  });
+
+  it("emits a bare tap with no modifiers", () => {
+    // return=28
+    expect(toYdotoolArgs(parseKeySpec("return"))).toEqual(["28:1", "28:0"]);
+  });
+
+  it("maps cmd to Super and typed characters to their keycode", () => {
+    // cmd=125 (Super/Meta), a=30
+    expect(toYdotoolArgs(parseKeySpec("cmd+a"))).toEqual([
+      "125:1",
+      "30:1",
+      "30:0",
+      "125:0",
+    ]);
+  });
+
+  it("rejects the fn modifier (no Linux keycode)", () => {
+    expect(() => toYdotoolArgs(parseKeySpec("fn+f5"))).toThrow(/no Linux keycode/);
   });
 });

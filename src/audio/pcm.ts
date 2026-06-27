@@ -6,8 +6,8 @@ const EMPTY_FLOATS = new Float32Array(0);
  * carrying any partial trailing sample (1–3 bytes) across `push` calls. Pure and
  * deterministic — the carry logic is unit-tested without spawning ffmpeg.
  *
- * macOS runs little-endian (arm64/x86_64), so a copied byte range views directly
- * as f32le with no per-sample decoding.
+ * Both target platforms run little-endian (macOS arm64/x86_64, Linux x86_64), so
+ * a copied byte range views directly as f32le with no per-sample decoding.
  */
 export class PcmFramer {
   private leftover: Uint8Array = EMPTY_BYTES;
