@@ -54,7 +54,7 @@ platform-dispatched at runtime (`process.platform`), so the same code and
   for `pactl` device enumeration — both present on a stock PipeWire desktop.
 - `ydotool` + `ydotoold` for keypresses. ydotool injects at the kernel `uinput`
   layer, so it works under any Wayland compositor (KDE, GNOME, wlroots) as well as
-  X11. The `ydotool install` step enables `ydotool.service`; the user also needs
+  X11. The `tingtype install` step enables `ydotool.service`; the user also needs
   access to `/dev/uinput` (be in the `input` group or have a uinput udev ACL).
   Install on Arch/CachyOS: `paru -S ydotool`.
 

@@ -170,11 +170,15 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-    # ydotoold must be running for keypresses to land.
-    systemctl --user enable --now ydotool.service
+    # Register + start tingtype first so a missing keypress backend can't leave
+    # the install half-done (install.sh runs under `set -e`).
     systemctl --user daemon-reload
     systemctl --user enable "$SERVICE_ID"
     systemctl --user restart "$SERVICE_ID"
+    # ydotoold provides the keypress backend; best-effort so a missing/renamed
+    # unit doesn't abort the whole install.
+    systemctl --user enable --now ydotool.service ||
+      echo "warning: could not enable ydotool.service — keypresses won't land until ydotoold runs" >&2
   }
 
   svc_start() { systemctl --user start "$SERVICE_ID" && echo "Started."; }

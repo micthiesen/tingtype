@@ -147,8 +147,10 @@ const YDOTOOL_MODIFIER_CODES: Record<string, number> = {
 };
 
 /**
- * Linux keycodes for the named keys and characters in our keyspec vocabulary.
- * Mirrors the cliclick names so the same `config.toml` works on either platform.
+ * Linux keycodes for the common subset of the keyspec vocabulary — the keys a
+ * `config.toml` realistically uses on both platforms. Less-common cliclick names
+ * (f13–f16, the num-pad, media/volume/brightness keys) are macOS-only and will
+ * throw on Linux (logged as a no-op by {@link YdotoolPresser}) if configured.
  * `delete`/`backspace` map to Backspace (KEY_BACKSPACE), matching the mac key.
  */
 const YDOTOOL_KEY_CODES: Record<string, number> = {

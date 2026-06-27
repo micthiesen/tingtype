@@ -9,7 +9,7 @@
 #   directly with mtools. Run with sudo (the raw device is root-owned).
 # Linux: the kernel FAT driver handles the odd sector size, so the volume mounts
 #   normally — we mount it via udisksctl (no sudo needed) and copy files in.
-set -uo pipefail
+set -euo pipefail
 
 OS="$(uname)"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,6 +56,8 @@ else
   DEV="$(lsblk -rno NAME,FSTYPE,LABEL | awk '$2=="vfat" && $3=="TINGDISK" {print "/dev/"$1; exit}')"
   if [ -z "$DEV" ]; then
     DEV="$(lsblk -rno NAME,FSTYPE,RM | awk '$2=="vfat" && $3=="1" {print "/dev/"$1; exit}')"
+    [ -n "$DEV" ] &&
+      echo "Warning: no TINGDISK label found; using first removable vfat volume $DEV. Ctrl-C now if that isn't the ting." >&2
   fi
   [ -n "$DEV" ] || {
     echo "ting FAT volume not found — is it on (handle pushed) and plugged in?"
@@ -63,8 +65,12 @@ else
     exit 1
   }
 
-  # Mount via udisksctl (polkit lets the local user do this without sudo).
-  MNT="$(udisksctl mount -b "$DEV" 2>/dev/null | sed -n 's/^Mounted .* at \(.*\)\.\?$/\1/p')"
+  # Mount via udisksctl (polkit lets the local user do this without sudo). Capture
+  # the path after "at " and strip the trailing period udisks appends; `|| true`
+  # so an already-mounted device falls through to the lsblk lookup instead of
+  # aborting under `set -e`.
+  MNT="$(udisksctl mount -b "$DEV" 2>/dev/null | sed -n 's/^Mounted [^ ]* at \(.*\)$/\1/p')" || true
+  MNT="${MNT%.}"
   if [ -z "$MNT" ]; then
     MNT="$(lsblk -rno MOUNTPOINT "$DEV" | head -n1)" # already mounted?
   fi

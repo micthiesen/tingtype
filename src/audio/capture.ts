@@ -52,10 +52,23 @@ export class CaptureSupervisor {
   async run(): Promise<void> {
     let backoff = this.minBackoffMs;
     while (!this.stopping) {
-      const device = resolveDevice(
-        this.opts.deviceSubstring,
-        listInputDevices(this.ffmpeg),
-      );
+      let device: AudioInputDevice | undefined;
+      try {
+        device = resolveDevice(
+          this.opts.deviceSubstring,
+          listInputDevices(this.ffmpeg),
+        );
+      } catch (err) {
+        // Enumeration tool unavailable (pactl/ffmpeg missing or not running).
+        // Treat as device-absent and keep polling — the supervisor must never
+        // crash on a transient or missing backend.
+        if (!this.loggedWaitingNotice) {
+          this.loggedWaitingNotice = true;
+          logger.warn(`Device enumeration failed (${String(err)}) — retrying…`);
+        }
+        await delay(this.pollIntervalMs);
+        continue;
+      }
       if (!device) {
         if (!this.loggedWaitingNotice) {
           this.loggedWaitingNotice = true;
