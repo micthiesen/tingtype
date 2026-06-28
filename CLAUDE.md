@@ -69,12 +69,20 @@ ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
   CUBILUX presents *two* USB capture PCMs (`hw:HLMSC4,0` and `hw:HLMSC4,1`). The
   signal arrives on **device 1**, but PipeWire's pulse source (`CUBILUX … Analog
   Stereo`) maps to the *dead* device 0 — so a `pulse` capture reads pure digital
-  silence (−91 dB). The fix: tingtype also enumerates raw ALSA capture PCMs
-  (`arecord -l`, backend `"alsa"`) and the Linux config targets `hw:HLMSC4,1`
-  directly via `ffmpeg -f alsa`. Address PCMs by stable card *id* (`hw:CARD=…,DEV=…`),
-  never the numeric card index (it shifts on replug). It worked on the Mac because
-  Core Audio enumerated the right terminal. Diagnose with `arecord -l` +
-  per-device `ffmpeg -f alsa -i hw:CARD=…,DEV=N … -af volumedetect`.
+  silence (−91 dB). tingtype can capture `hw:HLMSC4,1` directly via `ffmpeg -f alsa`
+  (it enumerates raw ALSA PCMs through `arecord -l`, backend `"alsa"`). Address
+  PCMs by stable card *id* (`hw:CARD=…,DEV=…`), never the numeric card index (it
+  shifts on replug). It worked on the Mac because Core Audio enumerated the right
+  terminal. Diagnose with `arecord -l` + per-device `ffmpeg -f alsa -i
+  hw:CARD=…,DEV=N … -af volumedetect`.
+- **This host shares DEV=1 with Handy (STT) via a virtual mic, so the config uses
+  `TingMic`, not raw ALSA.** `hw:` capture is exclusive — only one process can hold
+  DEV=1. The `ting-mic-bridge` user service (`~/.local/bin/ting-mic-bridge`) owns it
+  and republishes it as the PipeWire source **TingMic** (a `module-remap-source` off
+  a null sink, also set as the system default source). tingtype + Handy both read
+  TingMic, so they coexist. TingMic persists across Ting unplugs (KVM), so neither
+  app reverts. Set `input_device = "hw:HLMSC4,1"` instead to bypass the bridge and
+  grab the device raw (only viable when the bridge isn't running).
 - The ting sample must use **hold/loop playmode** so a held button sustains the
   chord — that sustain is what `hold_ms` measures. The device's own
   `config.json` on TINGDISK sets `"playmode": "hold"` per slot. Load the identical

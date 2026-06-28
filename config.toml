@@ -6,12 +6,14 @@
 # on macOS, PulseAudio/PipeWire sources *and* raw ALSA capture PCMs on Linux. Run
 # `tingtype devices` to see the exact strings.
 #
-# The CUBILUX HLMS-C4 exposes two USB capture PCMs and routes its live line input
-# to device 1 — a PCM PipeWire never surfaces as a pulse source (the pulse
-# "CUBILUX … Analog Stereo" source maps to the *dead* device 0). So target the
-# ALSA PCM directly by stable card id; "hw:HLMSC4,1" matches only that entry.
-# (On macOS this same field is just "CUBILUX HLMS-C4 Line IN".)
-input_device = "hw:HLMSC4,1"
+# The CUBILUX HLMS-C4 routes its live line input to ALSA capture DEV=1 — a PCM
+# PipeWire won't surface (its pulse source binds the *dead* DEV=0). The
+# `ting-mic-bridge` user service owns DEV=1 and republishes it as the PipeWire
+# virtual source "TingMic" (also the system default source, shared with Handy/STT)
+# so the one exclusive device feeds both apps. tingtype reads that shared source.
+# To capture the raw PCM directly instead (no bridge), use "hw:HLMSC4,1".
+# (On macOS this field is just "CUBILUX HLMS-C4 Line IN".)
+input_device = "TingMic"
 samplerate   = 48000
 
 [detector]
