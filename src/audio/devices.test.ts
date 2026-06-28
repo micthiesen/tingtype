@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   type AudioInputDevice,
   ffmpegInputArgs,
+  parseAlsaDirectSpec,
   parseArecordDevices,
   parseAvfoundationDevices,
   parsePactlSources,
@@ -104,6 +105,28 @@ describe("parseArecordDevices", () => {
 
   it("returns nothing for empty input", () => {
     expect(parseArecordDevices("")).toEqual([]);
+  });
+});
+
+describe("parseAlsaDirectSpec", () => {
+  it("targets a literal ALSA PCM for an alsa: spec", () => {
+    expect(parseAlsaDirectSpec("alsa:ting_shared")).toEqual({
+      index: -1,
+      name: "alsa:ting_shared",
+      id: "ting_shared",
+      backend: "alsa",
+    });
+  });
+
+  it("passes hw: specs through verbatim too", () => {
+    expect(parseAlsaDirectSpec("alsa:hw:CARD=HLMSC4,DEV=1")?.id).toBe(
+      "hw:CARD=HLMSC4,DEV=1",
+    );
+  });
+
+  it("returns undefined for normal substrings (fall through to resolveDevice)", () => {
+    expect(parseAlsaDirectSpec("TingMic")).toBeUndefined();
+    expect(parseAlsaDirectSpec("hw:HLMSC4,1")).toBeUndefined();
   });
 });
 

@@ -179,6 +179,19 @@ export function ffmpegInputArgs(
   }
 }
 
+/**
+ * An `alsa:<pcm>` spec targets a literal ALSA PCM directly (e.g. a dsnoop/dmix
+ * device that `arecord -l` won't enumerate), bypassing device discovery. Used to
+ * keep the low-latency raw-ALSA capture path while *sharing* an otherwise
+ * exclusive capture device across processes. Returns undefined for normal specs,
+ * so callers fall through to substring resolution.
+ */
+export function parseAlsaDirectSpec(spec: string): AudioInputDevice | undefined {
+  const m = /^alsa:(.+)$/.exec(spec.trim());
+  if (!m) return undefined;
+  return { index: -1, name: spec, id: m[1], backend: "alsa" };
+}
+
 /** First device whose name or id contains `substring` (case-insensitive). */
 export function resolveDevice(
   substring: string,

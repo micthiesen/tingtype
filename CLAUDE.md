@@ -75,14 +75,16 @@ ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
   shifts on replug). It worked on the Mac because Core Audio enumerated the right
   terminal. Diagnose with `arecord -l` + per-device `ffmpeg -f alsa -i
   hw:CARD=…,DEV=N … -af volumedetect`.
-- **This host shares DEV=1 with Handy (STT) via a virtual mic, so the config uses
-  `TingMic`, not raw ALSA.** `hw:` capture is exclusive — only one process can hold
-  DEV=1. The `ting-mic-bridge` user service (`~/.local/bin/ting-mic-bridge`) owns it
-  and republishes it as the PipeWire source **TingMic** (a `module-remap-source` off
-  a null sink, also set as the system default source). tingtype + Handy both read
-  TingMic, so they coexist. TingMic persists across Ting unplugs (KVM), so neither
-  app reverts. Set `input_device = "hw:HLMSC4,1"` instead to bypass the bridge and
-  grab the device raw (only viable when the bridge isn't running).
+- **This host shares DEV=1 with Handy (STT) but tingtype still reads raw ALSA for
+  low latency**, so the config is `input_device = "alsa:ting_shared"`. `hw:` capture
+  is exclusive, so an `~/.asoundrc` **dsnoop** (`ting_shared`) fans the one hardware
+  stream out to multiple readers: tingtype reads it directly (raw/snappy — routing
+  through PipeWire added audible lag to tap detection), and the `ting-mic-bridge`
+  user service reads the *same* dsnoop to republish a PipeWire virtual source
+  **TingMic** (default source) for Handy. An `alsa:<pcm>` config spec
+  ({@link parseAlsaDirectSpec}) targets a literal PCM that `arecord -l` won't list.
+  Raw `hw:HLMSC4,1` also works but can't be shared. The dsnoop + bridge live in the
+  `ting-mic-bridge` dotfiles stow package; see `~/.research/ting-virtual-mic.md`.
 - The ting sample must use **hold/loop playmode** so a held button sustains the
   chord — that sustain is what `hold_ms` measures. The device's own
   `config.json` on TINGDISK sets `"playmode": "hold"` per slot. Load the identical

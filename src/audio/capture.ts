@@ -4,6 +4,7 @@ import {
   type AudioInputDevice,
   ffmpegInputArgs,
   listInputDevices,
+  parseAlsaDirectSpec,
   resolveDevice,
 } from "./devices.js";
 import { PcmFramer } from "./pcm.js";
@@ -54,10 +55,11 @@ export class CaptureSupervisor {
     while (!this.stopping) {
       let device: AudioInputDevice | undefined;
       try {
-        device = resolveDevice(
-          this.opts.deviceSubstring,
-          listInputDevices(this.ffmpeg),
-        );
+        // An `alsa:<pcm>` spec is used verbatim (a dsnoop/dmix PCM that device
+        // enumeration won't list); everything else resolves by substring.
+        device =
+          parseAlsaDirectSpec(this.opts.deviceSubstring) ??
+          resolveDevice(this.opts.deviceSubstring, listInputDevices(this.ffmpeg));
       } catch (err) {
         // Enumeration tool unavailable (pactl/ffmpeg missing or not running).
         // Treat as device-absent and keep polling — the supervisor must never
