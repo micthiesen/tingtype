@@ -76,8 +76,17 @@ ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
   Core Audio enumerated the right terminal. Diagnose with `arecord -l` +
   per-device `ffmpeg -f alsa -i hw:CARD=…,DEV=N … -af volumedetect`.
 - The ting sample must use **hold/loop playmode** so a held button sustains the
-  chord — that sustain is what `hold_ms` measures. Load the identical WAV into all
-  four slots so a stray slot-select press can't change the sound.
+  chord — that sustain is what `hold_ms` measures. The device's own
+  `config.json` on TINGDISK sets `"playmode": "hold"` per slot. Load the identical
+  WAV into all four slots so a stray slot-select press can't change the sound.
+- **Keep the sample short (~150ms), not ~1s.** In hold playmode a tap plays one
+  full pass of the sample, so the sample length is the *floor* on a tap's tone
+  duration. If it exceeds `gesture.hold_ms` (400ms) every tap reads as a hold and
+  fires `secondary` instead of `primary` (the original 1003ms `gen` default did
+  exactly this — "plays too long", and a ~2s hold audibly looped it twice). The
+  loop is phase-continuous/integer-cycle seamless, so short loops fine. `gen`
+  defaults to 150ms. Pitch is unaffected by length — rate stays 48kHz, the
+  detector bins are exact.
 - **macOS:** capture is `ffmpeg -f avfoundation`, keypresses `cliclick` (both via
   Homebrew). Hammerspoon is also installed if a different key backend is wanted.
 - **Linux (this machine, CachyOS/KDE Wayland):** capture is `ffmpeg -f pulse`

@@ -29,7 +29,8 @@ Commands:
 gen options:
   --out PATH          Output path (default: signature.wav)
   --tones a,b,c       Override tones in Hz (default: config tones)
-  --duration-ms N     Approx sample duration (default: 1000; snapped for seamless loop)
+  --duration-ms N     Approx sample duration (default: 150; snapped for seamless loop).
+                      Keep it well under gesture.hold_ms so a tap reads as a tap.
   --peak P            Sample amplitude 0-1 (default: 0.25; lower = quieter)
   --no-loop           Faded one-shot instead of a seamless loop (offline testing)
 
@@ -163,7 +164,10 @@ function cmdGen(app: AppConfig, args: Args): void {
     );
   }
 
-  const durationMs = args.number("duration-ms") ?? 1000;
+  // Default short: the ting loops the sample in hold playmode, so a tap plays one
+  // short pass (must stay under gesture.hold_ms to read as `primary`) and a held
+  // button loops it past the hold threshold. A long sample makes every tap a hold.
+  const durationMs = args.number("duration-ms") ?? 150;
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
     throw new Error(
       `--duration-ms must be a positive number, got "${args.string("duration-ms")}"`,
