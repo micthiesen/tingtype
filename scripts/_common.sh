@@ -147,16 +147,32 @@ else
 
   is_loaded() { [ -f "$UNIT_PATH" ]; }
 
+  # The ydotoold daemon ships under different unit names across distros (Arch:
+  # ydotoold.service; others: ydotool.service) — both just run /usr/bin/ydotoold.
+  # Pick the one this system actually has so we don't start a *second* daemon
+  # that races the running one for the same socket. Prefer an already-active unit.
+  resolve_ydotool_unit() {
+    local u
+    for u in ydotoold.service ydotool.service; do
+      systemctl --user is-active "$u" &>/dev/null && { echo "$u"; return 0; }
+    done
+    for u in ydotoold.service ydotool.service; do
+      systemctl --user cat "$u" &>/dev/null && { echo "$u"; return 0; }
+    done
+    echo "ydotoold.service" # sensible default if the package isn't installed yet
+  }
+
   svc_install() {
-    local bun
+    local bun ydotool_unit
     bun="$(resolve_bun)" || { echo "bun not found" >&2; return 127; }
+    ydotool_unit="$(resolve_ydotool_unit)"
     mkdir -p "$(dirname "$UNIT_PATH")"
     cat > "$UNIT_PATH" <<EOF
 [Unit]
 Description=tingtype — the ting types
 # ydotoold provides the uinput keypress backend; pipewire-pulse the audio capture.
-After=ydotool.service pipewire-pulse.service
-Wants=ydotool.service
+After=$ydotool_unit pipewire-pulse.service
+Wants=$ydotool_unit
 
 [Service]
 Type=simple
@@ -175,10 +191,10 @@ EOF
     systemctl --user daemon-reload
     systemctl --user enable "$SERVICE_ID"
     systemctl --user restart "$SERVICE_ID"
-    # ydotoold provides the keypress backend; best-effort so a missing/renamed
-    # unit doesn't abort the whole install.
-    systemctl --user enable --now ydotool.service ||
-      echo "warning: could not enable ydotool.service — keypresses won't land until ydotoold runs" >&2
+    # Ensure the keypress backend is enabled+running. Idempotent when it's already
+    # active; best-effort so a missing/renamed unit doesn't abort the whole install.
+    systemctl --user enable --now "$ydotool_unit" ||
+      echo "warning: could not enable $ydotool_unit — keypresses won't land until ydotoold runs" >&2
   }
 
   svc_start() { systemctl --user start "$SERVICE_ID" && echo "Started."; }
