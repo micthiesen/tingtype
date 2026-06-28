@@ -65,12 +65,24 @@ ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
 - Input device: **CUBILUX HLMS-C4 Line IN** (substring-matched in `config.toml`,
   against device name *or* backend id). USB line-in, hot-plugged often — the
   capture supervisor treats a missing/dropped device as normal (polls + backoff).
+- **Linux gotcha — the live line input is on a PCM PipeWire doesn't expose.** The
+  CUBILUX presents *two* USB capture PCMs (`hw:HLMSC4,0` and `hw:HLMSC4,1`). The
+  signal arrives on **device 1**, but PipeWire's pulse source (`CUBILUX … Analog
+  Stereo`) maps to the *dead* device 0 — so a `pulse` capture reads pure digital
+  silence (−91 dB). The fix: tingtype also enumerates raw ALSA capture PCMs
+  (`arecord -l`, backend `"alsa"`) and the Linux config targets `hw:HLMSC4,1`
+  directly via `ffmpeg -f alsa`. Address PCMs by stable card *id* (`hw:CARD=…,DEV=…`),
+  never the numeric card index (it shifts on replug). It worked on the Mac because
+  Core Audio enumerated the right terminal. Diagnose with `arecord -l` +
+  per-device `ffmpeg -f alsa -i hw:CARD=…,DEV=N … -af volumedetect`.
 - The ting sample must use **hold/loop playmode** so a held button sustains the
   chord — that sustain is what `hold_ms` measures. Load the identical WAV into all
   four slots so a stray slot-select press can't change the sound.
 - **macOS:** capture is `ffmpeg -f avfoundation`, keypresses `cliclick` (both via
   Homebrew). Hammerspoon is also installed if a different key backend is wanted.
 - **Linux (this machine, CachyOS/KDE Wayland):** capture is `ffmpeg -f pulse`
-  (PipeWire's pulse compat; `pactl` enumerates sources), keypresses `ydotool`
+  (PipeWire's pulse compat; `pactl` enumerates sources) *or* `ffmpeg -f alsa`
+  (`arecord -l` enumerates raw PCMs) — `ffmpegInputArgs` picks per the device's
+  `backend`; see the two-PCM gotcha above. Keypresses `ydotool`
   (needs `ydotoold` running + `/dev/uinput` access). ydotool speaks raw keycodes,
   so `actions.ts` maps the keyspec vocabulary to Linux input-event-codes.

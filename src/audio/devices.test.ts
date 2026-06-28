@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   type AudioInputDevice,
   ffmpegInputArgs,
+  parseArecordDevices,
   parseAvfoundationDevices,
   parsePactlSources,
   resolveDevice,
@@ -73,6 +74,39 @@ describe("parsePactlSources", () => {
   });
 });
 
+describe("parseArecordDevices", () => {
+  const sample = [
+    "**** List of CAPTURE Hardware Devices ****",
+    "card 4: HLMSC4 [CUBILUX HLMS-C4], device 0: USB Audio [USB Audio]",
+    "  Subdevices: 1/1",
+    "  Subdevice #0: subdevice #0",
+    "card 4: HLMSC4 [CUBILUX HLMS-C4], device 1: USB Audio [USB Audio #1]",
+    "  Subdevices: 1/1",
+    "  Subdevice #0: subdevice #0",
+  ].join("\n");
+
+  it("addresses each PCM by stable card id and tags the alsa backend", () => {
+    expect(parseArecordDevices(sample)).toEqual([
+      {
+        index: 400,
+        name: "CUBILUX HLMS-C4 [hw:HLMSC4,0]",
+        id: "hw:CARD=HLMSC4,DEV=0",
+        backend: "alsa",
+      },
+      {
+        index: 401,
+        name: "CUBILUX HLMS-C4 [hw:HLMSC4,1]",
+        id: "hw:CARD=HLMSC4,DEV=1",
+        backend: "alsa",
+      },
+    ]);
+  });
+
+  it("returns nothing for empty input", () => {
+    expect(parseArecordDevices("")).toEqual([]);
+  });
+});
+
 describe("resolveDevice", () => {
   const devices: AudioInputDevice[] = [
     { index: 0, name: "Built-in Audio", id: "alsa_input.pci.analog-stereo" },
@@ -119,6 +153,22 @@ describe("ffmpegInputArgs", () => {
       "pulse",
       "-i",
       "alsa_input.usb-CUBILUX.analog-stereo",
+    ]);
+  });
+
+  it("uses the alsa demuxer when the device sets the alsa backend", () => {
+    const alsa: AudioInputDevice = {
+      index: 401,
+      name: "CUBILUX HLMS-C4 [hw:HLMSC4,1]",
+      id: "hw:CARD=HLMSC4,DEV=1",
+      backend: "alsa",
+    };
+    // Backend wins over the platform default on both platforms.
+    expect(ffmpegInputArgs(alsa, "linux")).toEqual([
+      "-f",
+      "alsa",
+      "-i",
+      "hw:CARD=HLMSC4,DEV=1",
     ]);
   });
 });

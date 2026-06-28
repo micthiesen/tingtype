@@ -3,10 +3,15 @@
 
 [audio]
 # Substring-matched (case-insensitive) against input device names/ids — Core Audio
-# on macOS, PulseAudio/PipeWire sources on Linux. Run `tingtype devices` to see the
-# exact strings; on Linux the substring also matches the pulse source id (e.g.
-# "alsa_input.usb-CUBILUX…"), so "cubilux" or "line" usually suffices.
-input_device = "CUBILUX HLMS-C4 Line IN"
+# on macOS, PulseAudio/PipeWire sources *and* raw ALSA capture PCMs on Linux. Run
+# `tingtype devices` to see the exact strings.
+#
+# The CUBILUX HLMS-C4 exposes two USB capture PCMs and routes its live line input
+# to device 1 — a PCM PipeWire never surfaces as a pulse source (the pulse
+# "CUBILUX … Analog Stereo" source maps to the *dead* device 0). So target the
+# ALSA PCM directly by stable card id; "hw:HLMSC4,1" matches only that entry.
+# (On macOS this same field is just "CUBILUX HLMS-C4 Line IN".)
+input_device = "hw:HLMSC4,1"
 samplerate   = 48000
 
 [detector]

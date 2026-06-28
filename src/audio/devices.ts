@@ -2,8 +2,14 @@ export interface AudioInputDevice {
   index: number;
   /** Human-friendly name — used for substring matching and display. */
   name: string;
-  /** Backend identifier passed to ffmpeg's `-i` (avfoundation name or pulse source name). */
+  /** Backend identifier passed to ffmpeg's `-i` (avfoundation name, pulse source name, or ALSA `hw:` spec). */
   id: string;
+  /**
+   * ffmpeg demuxer this device is addressed through. When unset, {@link ffmpegInputArgs}
+   * infers it from the platform (avfoundation on macOS, pulse on Linux). ALSA capture
+   * devices set it explicitly because on Linux they coexist with pulse sources.
+   */
+  backend?: "avfoundation" | "pulse" | "alsa";
 }
 
 /**
@@ -79,6 +85,42 @@ export function parsePactlSources(stdout: string): AudioInputDevice[] {
   return devices;
 }
 
+/**
+ * Parse `arecord -l` stdout (Linux / ALSA) into hardware capture devices.
+ * Exported for testing; each device is a single line like:
+ *
+ *   card 4: HLMSC4 [CUBILUX HLMS-C4], device 1: USB Audio [USB Audio #1]
+ *
+ * Some USB interfaces (e.g. the CUBILUX HLMS-C4) expose more than one capture
+ * PCM, and the live line input can land on a device PipeWire never surfaces as a
+ * pulse source. Addressing the PCM directly by stable card *id* (`hw:CARD=…,DEV=…`,
+ * not the numeric index, which shifts on replug) is the reliable path. The id
+ * doubles into the display name so a `config.toml` substring like `hw:HLMSC4,1`
+ * selects exactly this PCM and never the (possibly dead) pulse source.
+ */
+export function parseArecordDevices(stdout: string): AudioInputDevice[] {
+  const devices: AudioInputDevice[] = [];
+  const re = /^card (\d+): (\S+) \[([^\]]+)\], device (\d+):/;
+  for (const line of stdout.split("\n")) {
+    const m = line.match(re);
+    if (!m) continue;
+    const [, cardIndex, cardId, cardLabel, dev] = m;
+    devices.push({
+      index: Number(cardIndex) * 100 + Number(dev),
+      name: `${cardLabel} [hw:${cardId},${dev}]`,
+      id: `hw:CARD=${cardId},DEV=${dev}`,
+      backend: "alsa",
+    });
+  }
+  return devices;
+}
+
+/** Enumerate raw ALSA capture PCMs via `arecord -l` (Linux). */
+function listAlsaDevices(): AudioInputDevice[] {
+  const proc = Bun.spawnSync(["arecord", "-l"], { stdout: "pipe", stderr: "ignore" });
+  return parseArecordDevices(proc.stdout.toString());
+}
+
 /** Enumerate Core Audio input devices via ffmpeg's avfoundation backend (macOS). */
 function listAvfoundationDevices(ffmpeg: string): AudioInputDevice[] {
   const proc = Bun.spawnSync(
@@ -100,9 +142,18 @@ function listPulseDevices(): AudioInputDevice[] {
 
 /** Enumerate audio input devices using the platform's native backend. */
 export function listInputDevices(ffmpeg = "ffmpeg"): AudioInputDevice[] {
-  return process.platform === "darwin"
-    ? listAvfoundationDevices(ffmpeg)
-    : listPulseDevices();
+  if (process.platform === "darwin") return listAvfoundationDevices(ffmpeg);
+  // Linux: pulse sources (the common case) plus raw ALSA capture PCMs, since a
+  // multi-PCM USB interface can route its live input to a PCM PipeWire never
+  // exposes. ALSA enumeration is best-effort — a missing `arecord` must not
+  // sink the pulse list.
+  let alsa: AudioInputDevice[] = [];
+  try {
+    alsa = listAlsaDevices();
+  } catch {
+    alsa = [];
+  }
+  return [...listPulseDevices(), ...alsa];
 }
 
 /**
@@ -113,10 +164,19 @@ export function ffmpegInputArgs(
   device: AudioInputDevice,
   platform: NodeJS.Platform = process.platform,
 ): string[] {
-  if (platform === "darwin") return ["-f", "avfoundation", "-i", `:${device.id}`];
-  // PipeWire ships a PulseAudio-compatible server; the pulse demuxer takes the
-  // source Name directly.
-  return ["-f", "pulse", "-i", device.id];
+  const backend = device.backend ?? (platform === "darwin" ? "avfoundation" : "pulse");
+  switch (backend) {
+    // Core Audio is addressed by name with a leading colon (no video device).
+    case "avfoundation":
+      return ["-f", "avfoundation", "-i", `:${device.id}`];
+    // Raw ALSA capture PCM, addressed by its `hw:` spec.
+    case "alsa":
+      return ["-f", "alsa", "-i", device.id];
+    // PipeWire ships a PulseAudio-compatible server; the pulse demuxer takes the
+    // source Name directly.
+    default:
+      return ["-f", "pulse", "-i", device.id];
+  }
 }
 
 /** First device whose name or id contains `substring` (case-insensitive). */
