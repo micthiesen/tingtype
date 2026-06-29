@@ -13,7 +13,11 @@
 # the `ting-mic-bridge` service reads the same dsnoop to publish a virtual mic for
 # Handy. An `alsa:<pcm>` spec targets that PCM verbatim (dsnoop PCMs aren't in
 # `arecord -l`). Raw "hw:HLMSC4,1" also works but can't be shared.
-# (On macOS this field is just "CUBILUX HLMS-C4 Line IN".)
+#
+# input_device is the one genuinely per-machine setting, so override it (and only
+# it) in a gitignored `config.local.toml` that's deep-merged over this file — this
+# Mac uses "CUBILUX HLMS-C4 Line IN" (Core Audio) there. The value below is just
+# the fallback when no local override exists.
 input_device = "alsa:ting_shared"
 samplerate   = 48000
 

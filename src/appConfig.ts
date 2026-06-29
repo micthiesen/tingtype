@@ -97,21 +97,60 @@ export function normalizeAppConfig(raw: unknown): AppConfig {
   };
 }
 
-/** Load and validate the tuning config; falls back to built-in defaults if absent. */
-export function loadAppConfig(path: string): AppConfig {
-  if (!existsSync(path)) {
-    return normalizeAppConfig({});
+/** Is `v` a plain object (a TOML table), as opposed to an array or scalar? */
+function isTable(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Deep-merge `override` onto `base`: nested tables merge recursively, while
+ * scalars and arrays (e.g. `detector.tones`) are replaced wholesale. Used to
+ * layer a machine-local config over the shared committed one.
+ */
+function mergeTables(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const prev = out[key];
+    out[key] = isTable(prev) && isTable(value) ? mergeTables(prev, value) : value;
   }
-  let raw: unknown;
+  return out;
+}
+
+/** `config.toml` → `config.local.toml` (the gitignored per-machine override). */
+function localOverridePath(path: string): string {
+  return path.endsWith(".toml")
+    ? `${path.slice(0, -".toml".length)}.local.toml`
+    : `${path}.local`;
+}
+
+function parseTomlFile(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
   try {
-    raw = parseToml(readFileSync(path, "utf8"));
+    const parsed = parseToml(readFileSync(path, "utf8"));
+    return isTable(parsed) ? parsed : {};
   } catch (err) {
     throw new Error(
       `Failed to parse config ${path}: ${err instanceof Error ? err.message : err}`,
     );
   }
+}
+
+/**
+ * Load and validate the tuning config; falls back to built-in defaults if absent.
+ * A sibling `config.local.toml` (gitignored) is deep-merged on top so per-machine
+ * settings — chiefly `audio.input_device`, which differs across platforms/hosts —
+ * stay out of the shared committed file.
+ */
+export function loadAppConfig(path: string): AppConfig {
+  const merged = mergeTables(
+    parseTomlFile(path),
+    parseTomlFile(localOverridePath(path)),
+  );
   try {
-    return normalizeAppConfig(raw);
+    return normalizeAppConfig(merged);
   } catch (err) {
     throw new Error(
       `Invalid config ${path}: ${err instanceof Error ? err.message : err}`,
