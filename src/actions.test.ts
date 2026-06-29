@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseKeySpec, toCliclickArgs, toYdotoolArgs } from "./actions.js";
+import { parseKeySpec, toAppleScript, toYdotoolArgs } from "./actions.js";
 
 describe("parseKeySpec", () => {
   it("maps opt/alt to alt and recognizes named keys", () => {
@@ -55,21 +55,27 @@ describe("parseKeySpec", () => {
   });
 });
 
-describe("toCliclickArgs", () => {
-  it("wraps modified keys with key-down/key-up", () => {
-    expect(toCliclickArgs(parseKeySpec("ctrl+opt+space"))).toEqual([
-      "kd:ctrl,alt",
-      "kp:space",
-      "ku:ctrl,alt",
-    ]);
+describe("toAppleScript", () => {
+  it("maps a named key to its key code with a using clause", () => {
+    // space=49; opt→option, ctrl→control
+    expect(toAppleScript(parseKeySpec("ctrl+opt+space"))).toBe(
+      "key code 49 using {control down, option down}",
+    );
   });
 
-  it("emits a bare keypress with no modifiers", () => {
-    expect(toCliclickArgs(parseKeySpec("return"))).toEqual(["kp:return"]);
+  it("emits a bare key code with no modifiers (return=36)", () => {
+    expect(toAppleScript(parseKeySpec("return"))).toBe("key code 36");
   });
 
-  it("uses t: for typed characters", () => {
-    expect(toCliclickArgs(parseKeySpec("cmd+a"))).toEqual(["kd:cmd", "t:a", "ku:cmd"]);
+  it("uses keystroke for typed characters", () => {
+    expect(toAppleScript(parseKeySpec("cmd+a"))).toBe(
+      'keystroke "a" using {command down}',
+    );
+  });
+
+  it("throws for a named key with no macOS key code", () => {
+    // `volume-up` is in the vocabulary but has no stable virtual key code.
+    expect(() => toAppleScript(parseKeySpec("volume-up"))).toThrow(/no macOS key code/);
   });
 });
 

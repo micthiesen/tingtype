@@ -3,8 +3,8 @@ import { Logger } from "@micthiesen/mitools/logging";
 const logger = new Logger("Actions");
 
 /**
- * cliclick modifier tokens. opt/alt both map to `alt`. cliclick posts CGEvents,
- * so the process (or its parent terminal) needs Accessibility permission.
+ * Canonical modifier tokens. opt/alt both map to `alt`. The platform pressers map
+ * these on: macOS via osascript "… down" tokens, Linux via input-event keycodes.
  */
 const MODIFIERS: Record<string, string> = {
   cmd: "cmd",
@@ -18,7 +18,7 @@ const MODIFIERS: Record<string, string> = {
   fn: "fn",
 };
 
-/** Friendly key aliases → cliclick `kp:` key names. */
+/** Friendly key aliases → canonical named-key names. */
 const KEY_ALIASES: Record<string, string> = {
   enter: "return",
   return: "return",
@@ -31,7 +31,7 @@ const KEY_ALIASES: Record<string, string> = {
   backspace: "delete",
 };
 
-/** cliclick's `kp:` named-key vocabulary (see `cliclick kp:?`). */
+/** The named-key vocabulary a keyspec may use (mapped per-platform by the presser). */
 const KNOWN_NAMED_KEYS = new Set([
   "arrow-down",
   "arrow-left",
@@ -96,9 +96,9 @@ const KNOWN_NAMED_KEYS = new Set([
 
 export interface ParsedKeySpec {
   modifiers: string[];
-  /** A cliclick `kp:` key name, or a literal character to type via `t:`. */
+  /** A named special key (e.g. "return", "space"), or a single literal character. */
   key: string;
-  /** True when `key` is a named special key (`kp:`), false for a typed char (`t:`). */
+  /** True when `key` is a named special key, false for a typed character. */
   named: boolean;
 }
 
@@ -126,12 +126,79 @@ export function parseKeySpec(spec: string): ParsedKeySpec {
   throw new Error(`Unknown key "${keyToken}" in keyspec "${spec}"`);
 }
 
-/** Build the cliclick argument vector for a parsed keyspec (macOS). */
-export function toCliclickArgs(parsed: ParsedKeySpec): string[] {
-  const press = parsed.named ? `kp:${parsed.key}` : `t:${parsed.key}`;
-  if (parsed.modifiers.length === 0) return [press];
-  const mods = parsed.modifiers.join(",");
-  return [`kd:${mods}`, press, `ku:${mods}`];
+/**
+ * macOS modifiers as AppleScript `using { … }` tokens. (System Events has no `fn`
+ * modifier, so a keyspec using `fn` throws — logged as a no-op by the presser.)
+ */
+const APPLESCRIPT_MODIFIERS: Record<string, string> = {
+  cmd: "command down",
+  ctrl: "control down",
+  alt: "option down",
+  shift: "shift down",
+};
+
+/**
+ * macOS virtual key codes (kVK_*) for the named-key vocabulary. We drive keys via
+ * System Events `key code N` rather than `cliclick kp:` because cliclick's CGEvent
+ * special-keys (e.g. Return) are silently dropped by apps on recent macOS, while
+ * the Accessibility path System Events uses delivers them reliably. The common
+ * subset is mapped; less-common names (media/volume/brightness) have no stable
+ * virtual key code and throw if configured (logged as a no-op by the presser).
+ */
+const APPLESCRIPT_KEY_CODES: Record<string, number> = {
+  return: 36,
+  space: 49,
+  tab: 48,
+  esc: 53,
+  delete: 51, // Backspace (the mac "delete" key)
+  "fwd-delete": 117,
+  "arrow-up": 126,
+  "arrow-down": 125,
+  "arrow-left": 123,
+  "arrow-right": 124,
+  home: 115,
+  end: 119,
+  "page-up": 116,
+  "page-down": 121,
+  f1: 122,
+  f2: 120,
+  f3: 99,
+  f4: 118,
+  f5: 96,
+  f6: 97,
+  f7: 98,
+  f8: 100,
+  f9: 101,
+  f10: 109,
+  f11: 103,
+  f12: 111,
+};
+
+/**
+ * Build the AppleScript statement for a parsed keyspec (macOS), to run as
+ * `tell application "System Events" to <stmt>`. Named keys use `key code`; a typed
+ * character uses `keystroke`. Modifiers attach via a `using { … }` clause.
+ */
+export function toAppleScript(parsed: ParsedKeySpec): string {
+  const using = parsed.modifiers.map((m) => {
+    const tok = APPLESCRIPT_MODIFIERS[m];
+    if (!tok) throw new Error(`Modifier "${m}" has no AppleScript equivalent`);
+    return tok;
+  });
+  const usingClause = using.length > 0 ? ` using {${using.join(", ")}}` : "";
+
+  if (parsed.named) {
+    const code = APPLESCRIPT_KEY_CODES[parsed.key];
+    if (code === undefined) {
+      throw new Error(
+        `Key "${parsed.key}" has no macOS key code (unsupported via osascript)`,
+      );
+    }
+    return `key code ${code}${usingClause}`;
+  }
+  // Typed character: escape backslash and quote for the AppleScript string literal.
+  const ch = parsed.key.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `keystroke "${ch}"${usingClause}`;
 }
 
 /**
@@ -264,20 +331,27 @@ export interface KeyPresser {
   press(spec: string): void;
 }
 
-/** Fires keypresses by shelling out to `cliclick`. */
-export class CliclickPresser implements KeyPresser {
-  constructor(private readonly binary = "cliclick") {}
+/**
+ * Fires keypresses on macOS via `osascript` driving System Events. This uses the
+ * Accessibility API (not raw CGEvents like cliclick), so special keys such as
+ * Return actually reach the focused app. The daemon needs Accessibility *and*
+ * Automation ("control System Events") permission — both prompted once for
+ * TingType.app and remembered.
+ */
+export class AppleScriptPresser implements KeyPresser {
+  constructor(private readonly binary = "osascript") {}
 
   press(spec: string): void {
-    let args: string[];
+    let stmt: string;
     try {
-      args = toCliclickArgs(parseKeySpec(spec));
+      stmt = toAppleScript(parseKeySpec(spec));
     } catch (err) {
       logger.error(`Bad keyspec "${spec}"`, err);
       return;
     }
+    const script = `tell application "System Events" to ${stmt}`;
     try {
-      const proc = Bun.spawn([this.binary, ...args], {
+      const proc = Bun.spawn([this.binary, "-e", script], {
         stdout: "ignore",
         stderr: "pipe",
       });
@@ -285,12 +359,12 @@ export class CliclickPresser implements KeyPresser {
         .then(async (code) => {
           if (code !== 0) {
             const stderr = await new Response(proc.stderr).text();
-            logger.error(`cliclick exited ${code} for "${spec}": ${stderr.trim()}`);
+            logger.error(`osascript exited ${code} for "${spec}": ${stderr.trim()}`);
           }
         })
-        .catch((err) => logger.error(`cliclick wait failed for "${spec}"`, err));
+        .catch((err) => logger.error(`osascript wait failed for "${spec}"`, err));
     } catch (err) {
-      logger.error(`Failed to spawn cliclick for "${spec}" (is it installed?)`, err);
+      logger.error(`Failed to spawn osascript for "${spec}"`, err);
     }
   }
 }
@@ -335,5 +409,7 @@ export class YdotoolPresser implements KeyPresser {
 
 /** Pick the keypress backend for the current platform. */
 export function createPresser(): KeyPresser {
-  return process.platform === "darwin" ? new CliclickPresser() : new YdotoolPresser();
+  return process.platform === "darwin"
+    ? new AppleScriptPresser()
+    : new YdotoolPresser();
 }

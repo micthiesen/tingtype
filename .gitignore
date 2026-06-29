@@ -3,3 +3,4 @@ node_modules
 logs
 *.wav
 config.local.toml
+TingType.app

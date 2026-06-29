@@ -22,8 +22,11 @@ echo "  Logs:    tingtype logs"
 echo "  Stop:    tingtype stop"
 echo ""
 if [ "$OS" = "Darwin" ]; then
-  echo "NOTE: grant Microphone AND Accessibility to the daemon, or it will detect"
-  echo "      but never type. See the README permissions section."
+  echo "NOTE: the daemon runs as TingType.app so macOS can grant it permissions."
+  echo "      On first run it prompts for Microphone — click Allow. For keystrokes,"
+  echo "      add TingType under System Settings → Privacy & Security → Accessibility"
+  echo "      and enable it, then 'tingtype restart'. Without these it detects but"
+  echo "      never types (or hears only silence). See the README permissions section."
 else
   echo "NOTE: keypresses go through ydotoold (uinput). If keys never land, check"
   echo "      'systemctl --user status ydotool' and that you can access /dev/uinput"

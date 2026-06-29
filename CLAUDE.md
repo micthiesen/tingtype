@@ -7,9 +7,10 @@ Enter (secondary).
 
 The two impure edges are platform-dispatched at runtime via `process.platform`:
 audio capture is `ffmpeg -f avfoundation` (macOS) / `-f pulse` (Linux), and
-keypresses are `cliclick` (macOS) / `ydotool` (Linux). The service layer in
-`scripts/` likewise dispatches launchd vs systemd `--user`. The same TS and
-`config.toml` run on both.
+keypresses are `osascript` driving System Events (macOS) / `ydotool` (Linux). The
+service layer in `scripts/` likewise dispatches launchd vs systemd `--user`. On
+macOS the launchd job runs a compiled launcher inside `TingType.app` (a stable,
+signed TCC identity — see Hardware notes); the same TS and `config.toml` run on both.
 
 **This is a living document — update it as conventions emerge; don't ask, just update.**
 
@@ -42,9 +43,9 @@ Always run `bun run check:write && bun test && bun run typecheck` after changes.
 src/
   cli.ts            # entrypoint: run / monitor / devices / gen / test + daemon lifecycle
   config.ts         # env config (mitools Injector): LOG_LEVEL, PUSHOVER, TINGTYPE_CONFIG
-  appConfig.ts      # config.toml tuning (audio/detector/gesture/actions) → typed AppConfig
+  appConfig.ts      # config.toml + per-machine config.local.toml merge → typed AppConfig
   gesture.ts        # span timing machine: tap→primary, hold/double-tap→secondary (pure)
-  actions.ts        # keyspec parse + cliclick/ydotool dispatch (pure parse, impure spawn)
+  actions.ts        # keyspec parse + osascript(macOS)/ydotool(Linux) dispatch (pure parse, impure spawn)
   audio/
     devices.ts      # avfoundation + pactl device listing, ffmpeg input args, resolve (pure parsers)
     capture.ts      # ffmpeg → f32 PCM supervisor; graceful disconnect/reconnect
@@ -57,8 +58,8 @@ src/
 ```
 
 Pure core (`dsp/`, `gesture.ts`, keyspec parsing, device parsing, ffmpeg-arg and
-ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
-`audio/capture.ts` (ffmpeg) and `actions.ts` (cliclick/ydotool).
+ydotool/AppleScript keycode mapping) is unit-tested offline. Impure edges:
+`audio/capture.ts` (ffmpeg) and `actions.ts` (osascript/ydotool).
 
 ## Hardware notes
 
@@ -97,8 +98,19 @@ ydotool/cliclick keycode mapping) is unit-tested offline. Impure edges:
   loop is phase-continuous/integer-cycle seamless, so short loops fine. `gen`
   defaults to 150ms. Pitch is unaffected by length — rate stays 48kHz, the
   detector bins are exact.
-- **macOS:** capture is `ffmpeg -f avfoundation`, keypresses `cliclick` (both via
-  Homebrew). Hammerspoon is also installed if a different key backend is wanted.
+- **macOS:** capture is `ffmpeg -f avfoundation` (Homebrew). Keypresses go through
+  `osascript` driving System Events (built-in) — NOT cliclick: cliclick's CGEvent
+  special-keys (e.g. Return) are silently dropped by apps on recent macOS, so
+  `secondary` never landed; System Events' Accessibility path delivers them.
+  - **The launchd daemon runs as a signed `TingType.app`** so it has a TCC identity
+    macOS will prompt for. A bare `bun` launchd job is silently denied Mic +
+    Accessibility (no prompt) → ffmpeg reads `−inf dB` silence and keystrokes vanish.
+    `build_app_bundle` (scripts/_common.sh) compiles `scripts/launcher.c` — a thin
+    supervisor that spawns `bun src/cli.ts run` and stays alive as the parent so
+    the ffmpeg/osascript children inherit the identity. The launcher's hash is
+    stable across daemon source edits, so the Mic/Accessibility/Automation grants
+    survive every `deploy` (which just restarts; only `install` recompiles).
+    Hammerspoon is also installed if a different key backend is ever wanted.
 - **Linux (this machine, CachyOS/KDE Wayland):** capture is `ffmpeg -f pulse`
   (PipeWire's pulse compat; `pactl` enumerates sources) *or* `ffmpeg -f alsa`
   (`arecord -l` enumerates raw PCMs) — `ffmpegInputArgs` picks per the device's

@@ -26,11 +26,87 @@ if [ "$OS" = "Darwin" ]; then
   PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_ID.plist"
   LOG_DIR="$REPO_DIR/logs"
   LOG_FILE="$LOG_DIR/tingtype.log"
+  # The launchd job runs the daemon through this generated .app wrapper (below).
+  BUNDLE_ID="dev.thiesen.tingtype"
+  APP_BUNDLE="$REPO_DIR/TingType.app"
+  APP_EXEC="$APP_BUNDLE/Contents/MacOS/tingtype"
 
   is_loaded() { launchctl print "$DOMAIN/$SERVICE_ID" &>/dev/null; }
 
+  # Generate (and ad-hoc sign) the TingType.app wrapper that launchd launches.
+  # A bare launchd job runs as the generic `bun` binary, which has no stable
+  # identity macOS will prompt for — so Microphone access is silently denied
+  # (ffmpeg captures pure −inf dB silence) and cliclick's keystrokes are dropped,
+  # both with NO error. Wrapping the launch in a signed .app gives the daemon one
+  # durable TCC identity ("TingType"): macOS prompts once for the mic, lists it
+  # under Accessibility, and remembers both across restarts. The bundle is
+  # generated per-machine (gitignored) so the repo path is baked in wherever it
+  # installs — that's what makes this reproducible across machines.
+  #
+  # The main executable is a COMPILED, signed Mach-O (scripts/launcher.c), not a
+  # shell script: a script's process image is the interpreter and any exec to bun
+  # swaps in bun's generic identity, so it can't carry the bundle identity or the
+  # NSMicrophoneUsageDescription that TCC needs to even show a prompt. The launcher
+  # spawns bun on the TS source and stays alive as the parent, so ffmpeg/cliclick
+  # inherit TingType's identity — and because the launcher's content is fixed
+  # (only the baked paths matter), its hash is stable across daemon source edits,
+  # so the Mic + Accessibility grants survive every `deploy`. See launcher.c.
+  build_app_bundle() {
+    local bun
+    bun="$(resolve_bun)" || { echo "bun not found" >&2; return 127; }
+    command -v cc &>/dev/null ||
+      { echo "cc not found (install Xcode Command Line Tools: xcode-select --install)" >&2; return 1; }
+    mkdir -p "$APP_BUNDLE/Contents/MacOS"
+
+    cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>$BUNDLE_ID</string>
+  <key>CFBundleName</key>
+  <string>TingType</string>
+  <key>CFBundleExecutable</key>
+  <string>tingtype</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>tingtype listens to the line-in for the ting's chord to trigger keystrokes.</string>
+</dict>
+</plist>
+EOF
+
+    # Compile the launcher with the bun + repo paths baked in. Same inputs → same
+    # binary → same hash → same TCC identity, so grants persist across reinstalls.
+    echo "Compiling TingType.app launcher…"
+    cc -O2 -o "$APP_EXEC" \
+      -DBUN_PATH="\"$bun\"" \
+      -DREPO_DIR="\"$REPO_DIR\"" \
+      "$REPO_DIR/scripts/launcher.c" ||
+      { echo "compiling launcher.c failed" >&2; return 1; }
+
+    # Ad-hoc sign with a fixed identifier so the TCC grant survives recompiles when
+    # the source is unchanged; an intended source change re-prompts, as it should.
+    if command -v codesign &>/dev/null; then
+      codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_BUNDLE" 2>/dev/null ||
+        echo "warning: codesign failed; mic/accessibility grants may not persist" >&2
+    else
+      echo "warning: codesign not found; the mic/accessibility prompt may not stick" >&2
+    fi
+  }
+
   svc_install() {
     mkdir -p "$LOG_DIR"
+    build_app_bundle
     cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,10 +116,16 @@ if [ "$OS" = "Darwin" ]; then
   <string>$SERVICE_ID</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$REPO_DIR/scripts/run.sh</string>
+    <string>$APP_EXEC</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$REPO_DIR</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd's minimal PATH omits Homebrew, where ffmpeg and cliclick live. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
   <key>StandardOutPath</key>
   <string>$LOG_FILE</string>
   <key>StandardErrorPath</key>
@@ -60,11 +142,19 @@ if [ "$OS" = "Darwin" ]; then
 </dict>
 </plist>
 EOF
-    # Reload so a changed plist (e.g. moved repo) actually takes effect.
+    # Reload so a changed plist (e.g. moved repo, or the run.sh→.app switch) takes
+    # effect. bootout is asynchronous — bootstrapping before the old job is fully
+    # gone returns "Input/output error (5)", so wait for it to clear, then retry.
     if is_loaded; then
       launchctl bootout "$DOMAIN/$SERVICE_ID" 2>/dev/null || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do is_loaded || break; sleep 0.5; done
     fi
-    launchctl bootstrap "$DOMAIN" "$PLIST_PATH"
+    local i
+    for i in 1 2 3 4 5; do
+      launchctl bootstrap "$DOMAIN" "$PLIST_PATH" 2>/dev/null && break
+      [ "$i" = 5 ] && { echo "launchctl bootstrap failed after retries" >&2; return 1; }
+      sleep 0.5
+    done
     launchctl kickstart -k "$DOMAIN/$SERVICE_ID"
   }
 
@@ -133,7 +223,7 @@ EOF
     launchctl bootout "$DOMAIN/$SERVICE_ID" 2>/dev/null
     launchctl kill SIGTERM "$DOMAIN/$SERVICE_ID" 2>/dev/null && sleep 1
     launchctl kill SIGKILL "$DOMAIN/$SERVICE_ID" 2>/dev/null
-    pkill -9 -f "$REPO_DIR/scripts/run.sh" 2>/dev/null
+    pkill -9 -f "$APP_EXEC" 2>/dev/null
     pkill -9 -f "$REPO_DIR/src/cli.ts run" 2>/dev/null
     echo "Done."
   }

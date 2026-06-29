@@ -29,7 +29,7 @@ Line IN  →  ffmpeg (avfoundation / pulse, 48k mono f32)  →  Detector (FFT ba
                                        GestureDecoder (span: tap / hold / double-tap)
                                                               │ primary / secondary
                                                               ▼
-                                          cliclick (macOS) / ydotool (Linux) keypress
+                              osascript/System Events (macOS) / ydotool (Linux) keypress
 ```
 
 The detector and gesture decoder are pure and unit-tested offline; the ffmpeg
@@ -45,8 +45,10 @@ platform-dispatched at runtime (`process.platform`), so the same code and
 
 **macOS:**
 
-- `ffmpeg` (audio capture via avfoundation) and `cliclick` (keypresses):
-  `brew install ffmpeg cliclick`
+- `ffmpeg` for audio capture (via avfoundation): `brew install ffmpeg`.
+- Keypresses use `osascript` (System Events), which ships with macOS — nothing to
+  install. (cliclick is *not* used: its synthetic special-keys like Return are
+  silently dropped by apps on recent macOS; System Events delivers them reliably.)
 
 **Linux (PipeWire/PulseAudio + a Wayland or X11 session):**
 
@@ -102,14 +104,29 @@ Key gesture knobs:
 
 **macOS (the classic footguns):**
 
-- **Microphone (TCC):** the process needs mic access to open the input device.
-  Running `tingtype monitor` / `run` from a terminal triggers the prompt; the
-  *terminal app* is the grantee. System Settings → Privacy & Security → Microphone.
-- **Accessibility:** `cliclick` posts CGEvents, which requires the process (or its
-  parent terminal) under System Settings → Privacy & Security → **Accessibility**.
-  Without it, detection works but **no keys land, with no error.** This is the #1
-  "why isn't it typing" cause. For the launchd daemon, grant these to the binary
-  that runs it (Bun).
+macOS grants TCC permissions to a *process identity*, and a bare launchd job
+(running the generic `bun` binary) has none it will prompt for — so a background
+daemon is silently denied: ffmpeg captures pure `−inf dB` silence and keystrokes
+go nowhere, both with **no error**. To fix that once and for all, `tingtype install`
+compiles a tiny launcher into an ad-hoc-signed **`TingType.app`** and points the
+launchd agent at it (see `scripts/launcher.c`). The launcher's hash is stable across
+daemon source edits, so the daemon has one durable identity macOS can grant — and
+the grants survive every `deploy`. It needs three, each prompted once:
+
+- **Microphone:** on first run the daemon prompts *"TingType wants to access the
+  microphone"* — click **Allow**. (Running `tingtype monitor` / `run` from a terminal
+  instead makes the *terminal app* the grantee, which is why that path "just works"
+  but a fresh daemon doesn't.) System Settings → Privacy & Security → Microphone.
+- **Accessibility:** required to post keystrokes. Add **TingType** under System
+  Settings → Privacy & Security → **Accessibility**, enable it, then `tingtype
+  restart`. Without it, detection works but **no keys land, with no error** — the #1
+  "why isn't it typing" cause.
+- **Automation:** keypresses go through `osascript` driving System Events, so the
+  first keystroke prompts *"TingType wants to control System Events"* — click **OK**.
+
+The `.app` is generated per-machine (gitignored) with the repo path baked in, so the
+grants you give it persist across restarts and reinstalls. Other than those one-time
+prompts, no manual setup is needed.
 
 **Linux:**
 

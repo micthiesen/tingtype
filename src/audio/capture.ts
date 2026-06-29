@@ -119,6 +119,14 @@ export class CaptureSupervisor {
           "-hide_banner",
           "-loglevel",
           "error",
+          // Low-latency input: a raw capture stream needs no probing, and
+          // nobuffer stops ffmpeg from accumulating frames before forwarding.
+          "-fflags",
+          "nobuffer",
+          "-probesize",
+          "32",
+          "-analyzeduration",
+          "0",
           ...ffmpegInputArgs(device),
           "-ac",
           "1",
@@ -126,6 +134,11 @@ export class CaptureSupervisor {
           String(this.opts.sampleRate),
           "-f",
           "f32le",
+          // Flush every packet to the pipe immediately. Otherwise ffmpeg fills a
+          // ~32KB output buffer (~170ms @ 48k mono f32) before the detector sees
+          // a single sample — the dominant, and easily avoidable, capture latency.
+          "-flush_packets",
+          "1",
           "-",
         ],
         { stdout: "pipe", stderr: "pipe" },
