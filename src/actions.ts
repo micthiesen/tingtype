@@ -1,3 +1,4 @@
+import { dlopen, FFIType } from "bun:ffi";
 import { Logger } from "@micthiesen/mitools/logging";
 
 const logger = new Logger("Actions");
@@ -137,15 +138,23 @@ const APPLESCRIPT_MODIFIERS: Record<string, string> = {
   shift: "shift down",
 };
 
+/** CGEventFlags masks for the modifiers (used by the in-process FFI presser). */
+const MACOS_MODIFIER_FLAGS: Record<string, number> = {
+  shift: 0x20000, // kCGEventFlagMaskShift
+  ctrl: 0x40000, // kCGEventFlagMaskControl
+  alt: 0x80000, // kCGEventFlagMaskAlternate (option)
+  cmd: 0x100000, // kCGEventFlagMaskCommand
+};
+
 /**
- * macOS virtual key codes (kVK_*) for the named-key vocabulary. We drive keys via
- * System Events `key code N` rather than `cliclick kp:` because cliclick's CGEvent
- * special-keys (e.g. Return) are silently dropped by apps on recent macOS, while
- * the Accessibility path System Events uses delivers them reliably. The common
- * subset is mapped; less-common names (media/volume/brightness) have no stable
- * virtual key code and throw if configured (logged as a no-op by the presser).
+ * macOS virtual key codes (kVK_*) for the named-key vocabulary. Shared by both
+ * macOS backends — the in-process CGEvent presser (`CGEventCreateKeyboardEvent`)
+ * and the osascript fallback (`key code N`). We do NOT use `cliclick kp:`: its
+ * CGEvent special-keys (e.g. Return) are silently dropped by apps on recent macOS.
+ * The common subset is mapped; less-common names (media/volume/brightness) have no
+ * stable virtual key code and throw if configured (logged as a no-op by the presser).
  */
-const APPLESCRIPT_KEY_CODES: Record<string, number> = {
+const MACOS_KEY_CODES: Record<string, number> = {
   return: 36,
   space: 49,
   tab: 48,
@@ -188,7 +197,7 @@ export function toAppleScript(parsed: ParsedKeySpec): string {
   const usingClause = using.length > 0 ? ` using {${using.join(", ")}}` : "";
 
   if (parsed.named) {
-    const code = APPLESCRIPT_KEY_CODES[parsed.key];
+    const code = MACOS_KEY_CODES[parsed.key];
     if (code === undefined) {
       throw new Error(
         `Key "${parsed.key}" has no macOS key code (unsupported via osascript)`,
@@ -199,6 +208,36 @@ export function toAppleScript(parsed: ParsedKeySpec): string {
   // Typed character: escape backslash and quote for the AppleScript string literal.
   const ch = parsed.key.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   return `keystroke "${ch}"${usingClause}`;
+}
+
+/** A resolved macOS key event: a virtual key code OR a literal char, plus modifier flags. */
+export interface MacKeyEvent {
+  /** macOS virtual key code for a named key, or null when typing a `char`. */
+  keycode: number | null;
+  /** Literal character to type via a unicode event, or null for a `keycode`. */
+  char: string | null;
+  /** Combined CGEventFlags modifier mask. */
+  flags: number;
+}
+
+/** Resolve a parsed keyspec to a CGEvent keycode/char + modifier flags (macOS). */
+export function toMacKeyEvent(parsed: ParsedKeySpec): MacKeyEvent {
+  let flags = 0;
+  for (const m of parsed.modifiers) {
+    const mask = MACOS_MODIFIER_FLAGS[m];
+    if (mask === undefined) {
+      throw new Error(`Modifier "${m}" has no macOS flag mask (unsupported)`);
+    }
+    flags |= mask;
+  }
+  if (parsed.named) {
+    const keycode = MACOS_KEY_CODES[parsed.key];
+    if (keycode === undefined) {
+      throw new Error(`Key "${parsed.key}" has no macOS key code (unsupported)`);
+    }
+    return { keycode, char: null, flags };
+  }
+  return { keycode: null, char: parsed.key, flags };
 }
 
 /**
@@ -332,11 +371,71 @@ export interface KeyPresser {
 }
 
 /**
- * Fires keypresses on macOS via `osascript` driving System Events. This uses the
- * Accessibility API (not raw CGEvents like cliclick), so special keys such as
- * Return actually reach the focused app. The daemon needs Accessibility *and*
- * Automation ("control System Events") permission — both prompted once for
- * TingType.app and remembered.
+ * Fires keypresses in-process via CoreGraphics CGEvents (Bun FFI) — the macOS
+ * fast path. No subprocess, so dispatch is ~sub-ms instead of the ~90ms it costs
+ * to spawn osascript/cliclick per press (which is what made macOS feel laggier
+ * than Linux's persistent ydotoold). Posts to the HID event tap, which delivers
+ * special keys (Return) to apps and triggers global hotkeys. Needs Accessibility
+ * (the daemon's TingType.app identity has it) — but NOT Automation. Construction
+ * throws if the frameworks can't be dlopen'd, so the caller can fall back to
+ * {@link AppleScriptPresser}.
+ */
+export class CgEventPresser implements KeyPresser {
+  private readonly cg;
+  private readonly cf;
+
+  constructor() {
+    this.cg = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", {
+      CGEventCreateKeyboardEvent: {
+        args: [FFIType.ptr, FFIType.u16, FFIType.bool],
+        returns: FFIType.ptr,
+      },
+      CGEventPost: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
+      CGEventSetFlags: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
+      CGEventKeyboardSetUnicodeString: {
+        args: [FFIType.ptr, FFIType.u64, FFIType.ptr],
+        returns: FFIType.void,
+      },
+    });
+    this.cf = dlopen(
+      "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+      { CFRelease: { args: [FFIType.ptr], returns: FFIType.void } },
+    );
+  }
+
+  press(spec: string): void {
+    let ev: MacKeyEvent;
+    try {
+      ev = toMacKeyEvent(parseKeySpec(spec));
+    } catch (err) {
+      logger.error(`Bad keyspec "${spec}"`, err);
+      return;
+    }
+    const cg = this.cg.symbols;
+    const cf = this.cf.symbols;
+    const HID_TAP = 0; // kCGHIDEventTap
+    const charBuf = ev.char !== null ? new Uint16Array([ev.char.charCodeAt(0)]) : null;
+    try {
+      // Post key-down then key-up; a typed char carries a unicode string instead
+      // of relying on the key code, and modifiers ride along as event flags.
+      for (const down of [true, false]) {
+        const event = cg.CGEventCreateKeyboardEvent(null, ev.keycode ?? 0, down);
+        if (charBuf) cg.CGEventKeyboardSetUnicodeString(event, charBuf.length, charBuf);
+        if (ev.flags !== 0) cg.CGEventSetFlags(event, ev.flags);
+        cg.CGEventPost(HID_TAP, event);
+        cf.CFRelease(event);
+      }
+    } catch (err) {
+      logger.error(`Failed to post CGEvent for "${spec}"`, err);
+    }
+  }
+}
+
+/**
+ * Fires keypresses on macOS via `osascript` driving System Events — the fallback
+ * when the CGEvent FFI path can't load. This uses the Accessibility API (not raw
+ * CGEvents like cliclick), so special keys such as Return reach the focused app.
+ * Needs Accessibility *and* Automation ("control System Events") permission.
  */
 export class AppleScriptPresser implements KeyPresser {
   constructor(private readonly binary = "osascript") {}
@@ -409,7 +508,12 @@ export class YdotoolPresser implements KeyPresser {
 
 /** Pick the keypress backend for the current platform. */
 export function createPresser(): KeyPresser {
-  return process.platform === "darwin"
-    ? new AppleScriptPresser()
-    : new YdotoolPresser();
+  if (process.platform !== "darwin") return new YdotoolPresser();
+  // Prefer the in-process CGEvent path; fall back to osascript if FFI can't load.
+  try {
+    return new CgEventPresser();
+  } catch (err) {
+    logger.warn(`CGEvent FFI unavailable, falling back to osascript: ${String(err)}`);
+    return new AppleScriptPresser();
+  }
 }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { parseKeySpec, toAppleScript, toYdotoolArgs } from "./actions.js";
+import {
+  parseKeySpec,
+  toAppleScript,
+  toMacKeyEvent,
+  toYdotoolArgs,
+} from "./actions.js";
 
 describe("parseKeySpec", () => {
   it("maps opt/alt to alt and recognizes named keys", () => {
@@ -76,6 +81,37 @@ describe("toAppleScript", () => {
   it("throws for a named key with no macOS key code", () => {
     // `volume-up` is in the vocabulary but has no stable virtual key code.
     expect(() => toAppleScript(parseKeySpec("volume-up"))).toThrow(/no macOS key code/);
+  });
+});
+
+describe("toMacKeyEvent (CGEvent FFI mapping)", () => {
+  it("maps a named key to its key code and ORs modifier flags", () => {
+    // space=49; control=0x40000, option=0x80000 → 0xc0000
+    expect(toMacKeyEvent(parseKeySpec("ctrl+opt+space"))).toEqual({
+      keycode: 49,
+      char: null,
+      flags: 0xc0000,
+    });
+  });
+
+  it("maps a bare named key with no flags (return=36)", () => {
+    expect(toMacKeyEvent(parseKeySpec("return"))).toEqual({
+      keycode: 36,
+      char: null,
+      flags: 0,
+    });
+  });
+
+  it("maps a typed character to a char with cmd flag", () => {
+    expect(toMacKeyEvent(parseKeySpec("cmd+a"))).toEqual({
+      keycode: null,
+      char: "a",
+      flags: 0x100000,
+    });
+  });
+
+  it("throws for a named key with no macOS key code", () => {
+    expect(() => toMacKeyEvent(parseKeySpec("volume-up"))).toThrow(/no macOS key code/);
   });
 });
 
