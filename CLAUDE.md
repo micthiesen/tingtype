@@ -111,6 +111,14 @@ ydotool/AppleScript keycode mapping) is unit-tested offline. Impure edges:
     stable across daemon source edits, so the Mic/Accessibility/Automation grants
     survive every `deploy` (which just restarts; only `install` recompiles).
     Hammerspoon is also installed if a different key backend is ever wanted.
+  - **A `usbaudiod` restart (device replug, audio-stack reset) kills the
+    avfoundation stream without ending ffmpeg** — ffmpeg blocks in a dead Core
+    Audio read, ignores SIGTERM (only SIGKILL works), and wedges the device for
+    other readers. Symptom: daemon logs "Listening" then nothing for hours.
+    `capture.ts` handles this with a no-data watchdog (healthy capture delivers
+    PCM continuously, silence included, so a ~5s data gap = dead stream →
+    SIGKILL + reconnect), and `stop()` SIGKILLs so restarts can't orphan a
+    wedged ffmpeg.
 - **Linux (this machine, CachyOS/KDE Wayland):** capture is `ffmpeg -f pulse`
   (PipeWire's pulse compat; `pactl` enumerates sources) *or* `ffmpeg -f alsa`
   (`arecord -l` enumerates raw PCMs) — `ffmpegInputArgs` picks per the device's

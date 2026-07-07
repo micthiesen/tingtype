@@ -21,6 +21,8 @@ export interface CaptureOptions {
   /** Backoff bounds when a live stream drops (ms). */
   minBackoffMs?: number;
   maxBackoffMs?: number;
+  /** Kill + reconnect if no PCM arrives for this long (ms). */
+  watchdogMs?: number;
 }
 
 /**
@@ -36,6 +38,7 @@ export class CaptureSupervisor {
   private readonly pollIntervalMs: number;
   private readonly minBackoffMs: number;
   private readonly maxBackoffMs: number;
+  private readonly watchdogMs: number;
 
   private proc: Subprocess<"ignore", "pipe", "pipe"> | null = null;
   private stopping = false;
@@ -47,6 +50,7 @@ export class CaptureSupervisor {
     this.pollIntervalMs = opts.pollIntervalMs ?? 2000;
     this.minBackoffMs = opts.minBackoffMs ?? 500;
     this.maxBackoffMs = opts.maxBackoffMs ?? 5000;
+    this.watchdogMs = opts.watchdogMs ?? 5000;
   }
 
   /** Run until {@link stop} is called. Resolves when the supervisor halts. */
@@ -104,7 +108,9 @@ export class CaptureSupervisor {
 
   stop(): void {
     this.stopping = true;
-    this.proc?.kill();
+    // SIGKILL, not SIGTERM: an ffmpeg blocked in a dead Core Audio read ignores
+    // SIGTERM and would outlive us as an orphan still holding the device.
+    this.proc?.kill("SIGKILL");
   }
 
   /** Stream until ffmpeg exits. Returns true if any audio was received. */
@@ -152,14 +158,32 @@ export class CaptureSupervisor {
     // (and thus stdout) indefinitely. We also use it to report the exit reason.
     const stderrText = drainText(this.proc.stderr);
 
+    // A healthy capture delivers PCM continuously (silence is still frames), so
+    // a data gap means the stream is dead even though ffmpeg is alive — e.g. a
+    // usbaudiod restart on macOS kills the avfoundation stream without ending
+    // the process. Only SIGKILL unblocks it (see stop()).
+    let lastDataAt = Date.now();
+    const proc = this.proc;
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastDataAt > this.watchdogMs) {
+        logger.warn(
+          `No audio for ${this.watchdogMs}ms — killing stale capture to reconnect…`,
+        );
+        proc.kill("SIGKILL");
+      }
+    }, 1000);
+
     try {
       for await (const chunk of this.proc.stdout) {
         received = true;
+        lastDataAt = Date.now();
         const frame = this.framer.push(chunk);
         if (frame.length > 0) this.onSamples?.(frame);
       }
     } catch (err) {
       if (!this.stopping) logger.warn(`Audio read error: ${String(err)}`);
+    } finally {
+      clearInterval(watchdog);
     }
 
     await this.proc.exited;
