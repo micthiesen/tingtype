@@ -1,127 +1,81 @@
 # tingtype
 
-A cross-platform daemon (macOS + Linux) that detects a self-authored acoustic
-chord from a Teenage Engineering *ting* (on a line input) and synthesizes
-keypresses: short press → `ctrl+opt+space` (primary); a hold or double-tap →
-Enter (secondary).
+Cross-platform Bun daemon that detects a self-authored acoustic chord from a
+Teenage Engineering ting and synthesizes keys. A tap sends `ctrl+opt+space`; a
+hold or double tap sends Enter.
 
-The two impure edges are platform-dispatched at runtime via `process.platform`:
-audio capture is `ffmpeg -f avfoundation` (macOS) / `-f pulse` (Linux), and
-keypresses are `osascript` driving System Events (macOS) / `ydotool` (Linux). The
-service layer in `scripts/` likewise dispatches launchd vs systemd `--user`. On
-macOS the launchd job runs a compiled launcher inside `TingType.app` (a stable,
-signed TCC identity — see Hardware notes); the same TS and `config.toml` run on both.
+Update this file when work establishes or changes a durable project convention.
 
-**This is a living document — update it as conventions emerge; don't ask, just update.**
+## Delivery and gate
 
-## Always commit and push
+This personal project ships directly to `origin/main`. When scoped work is
+finished, preserve unrelated changes, pull with rebase if needed, run the gate,
+commit, and push without asking again. Do not open a PR.
 
-This is a personal project that should always be pushed. Commit and push whenever
-something is finished, bundling any pending docs/config into the same push. No PRs,
-no asking first. (No remote is configured yet — add one and push.)
+```bash
+bun run check:write
+bun test
+bun run typecheck
+```
 
-## The gate
+Use Bun for the runtime, package manager, and tests. Source runs directly as
+TypeScript with NodeNext `.js` import specifiers. Biome extends
+`@micthiesen/mitools/biome.shared.json`. Prefer strong types, discriminated
+unions, small modules, and no debug output.
 
-Always run `bun run check:write && bun test && bun run typecheck` after changes.
-
-## Conventions
-
-- **Bun runtime + package manager.** No build step — runs straight from TS source.
-  Local imports use NodeNext `.js` specifiers.
-- **Tests via `bun test`** (not vitest — it can't import Bun built-ins). Tests are
-  co-located as `src/**/*.test.ts`; `src/test-setup.ts` is preloaded.
-- **Biome** (88-col, 2-space) extends `@micthiesen/mitools/biome.shared.json`.
-  Zod config; `@micthiesen/mitools` for Logger/config/pushover.
-- **Strong types** (discriminated unions, explicit returns), small focused modules,
-  no `console.log` debris (the CLI uses `console.log` for user-facing output by design).
-- When unsure about tooling/structure/versions, check sibling projects under
-  `~/Code` (especially mitools-based ones like `lobster`) and match house style.
+Tests use `bun test`, not Vitest, because Vitest cannot import the Bun built-ins
+used here. Keep tests beside source as `src/**/*.test.ts`; Bun preloads
+`src/test-setup.ts`. Use Zod for configuration and mitools for Logger, config,
+and Pushover. CLI `console.log` calls are intentional user-facing output; remove
+only debug logging.
 
 ## Architecture
 
-```
-src/
-  cli.ts            # entrypoint: run / monitor / devices / gen / test + daemon lifecycle
-  config.ts         # env config (mitools Injector): LOG_LEVEL, PUSHOVER, TINGTYPE_CONFIG
-  appConfig.ts      # config.toml + per-machine config.local.toml merge → typed AppConfig
-  gesture.ts        # span timing machine: tap→primary, hold/double-tap→secondary (pure)
-  actions.ts        # keyspec parse + osascript(macOS)/ydotool(Linux) dispatch (pure parse, impure spawn)
-  audio/
-    devices.ts      # avfoundation + pactl device listing, ffmpeg input args, resolve (pure parsers)
-    capture.ts      # ffmpeg → f32 PCM supervisor; graceful disconnect/reconnect
-  dsp/
-    fft.ts          # radix-2 FFT + reusable scratch
-    goertzel.ts     # Goertzel power, bin/freq helpers, Hann window
-    detect.ts       # chord detector: windowing → FFT bank → onset/release events
-    signature.ts    # bin-snapped chord synthesis (gen)
-    wav.ts          # 16-bit PCM WAV encode/decode (mono)
-```
+The pure core covers gesture timing, DSP, WAV generation, keyspec parsing,
+device parsing, and backend argument/keycode mapping. Keep it unit-testable
+offline. The impure edges are audio capture and key injection:
 
-Pure core (`dsp/`, `gesture.ts`, keyspec parsing, device parsing, ffmpeg-arg and
-ydotool/AppleScript keycode mapping) is unit-tested offline. Impure edges:
-`audio/capture.ts` (ffmpeg) and `actions.ts` (osascript/ydotool).
+- macOS: `ffmpeg -f avfoundation` and `osascript` through System Events.
+- Linux: Pulse/PipeWire or direct ALSA capture, and `ydotool` through uinput.
 
-## Hardware notes
+Service scripts dispatch between launchd and systemd user services. Config is
+loaded from `config.toml` plus per-machine `config.local.toml`.
 
-- Input device: **CUBILUX HLMS-C4 Line IN** (substring-matched in `config.toml`,
-  against device name *or* backend id). USB line-in, hot-plugged often — the
-  capture supervisor treats a missing/dropped device as normal (polls + backoff).
-- **Linux gotcha — the live line input is on a PCM PipeWire doesn't expose.** The
-  CUBILUX presents *two* USB capture PCMs (`hw:HLMSC4,0` and `hw:HLMSC4,1`). The
-  signal arrives on **device 1**, but PipeWire's pulse source (`CUBILUX … Analog
-  Stereo`) maps to the *dead* device 0 — so a `pulse` capture reads pure digital
-  silence (−91 dB). tingtype can capture `hw:HLMSC4,1` directly via `ffmpeg -f alsa`
-  (it enumerates raw ALSA PCMs through `arecord -l`, backend `"alsa"`). Address
-  PCMs by stable card *id* (`hw:CARD=…,DEV=…`), never the numeric card index (it
-  shifts on replug). It worked on the Mac because Core Audio enumerated the right
-  terminal. Diagnose with `arecord -l` + per-device `ffmpeg -f alsa -i
-  hw:CARD=…,DEV=N … -af volumedetect`.
-- **This host shares DEV=1 with Handy (STT) but tingtype still reads raw ALSA for
-  low latency**, so the config is `input_device = "alsa:ting_shared"`. `hw:` capture
-  is exclusive, so an `~/.asoundrc` **dsnoop** (`ting_shared`) fans the one hardware
-  stream out to multiple readers: tingtype reads it directly (raw/snappy — routing
-  through PipeWire added audible lag to tap detection), and the `ting-mic-bridge`
-  user service reads the *same* dsnoop to republish a PipeWire virtual source
-  **TingMic** (default source) for Handy. An `alsa:<pcm>` config spec
-  ({@link parseAlsaDirectSpec}) targets a literal PCM that `arecord -l` won't list.
-  Raw `hw:HLMSC4,1` also works but can't be shared. The dsnoop + bridge live in the
-  `ting-mic-bridge` dotfiles stow package; see `~/.research/ting-virtual-mic.md`.
-- The ting sample must use **hold/loop playmode** so a held button sustains the
-  chord — that sustain is what `hold_ms` measures. The device's own
-  `config.json` on TINGDISK sets `"playmode": "hold"` per slot. Load the identical
-  WAV into all four slots so a stray slot-select press can't change the sound.
-- **Keep the sample short (~150ms), not ~1s.** In hold playmode a tap plays one
-  full pass of the sample, so the sample length is the *floor* on a tap's tone
-  duration. If it exceeds `gesture.hold_ms` (400ms) every tap reads as a hold and
-  fires `secondary` instead of `primary` (the original 1003ms `gen` default did
-  exactly this — "plays too long", and a ~2s hold audibly looped it twice). The
-  loop is phase-continuous/integer-cycle seamless, so short loops fine. `gen`
-  defaults to 150ms. Pitch is unaffected by length — rate stays 48kHz, the
-  detector bins are exact.
-- **macOS:** capture is `ffmpeg -f avfoundation` (Homebrew). Keypresses go through
-  `osascript` driving System Events (built-in) — NOT cliclick: cliclick's CGEvent
-  special-keys (e.g. Return) are silently dropped by apps on recent macOS, so
-  `secondary` never landed; System Events' Accessibility path delivers them.
-  - **The launchd daemon runs as a signed `TingType.app`** so it has a TCC identity
-    macOS will prompt for. A bare `bun` launchd job is silently denied Mic +
-    Accessibility (no prompt) → ffmpeg reads `−inf dB` silence and keystrokes vanish.
-    `build_app_bundle` (scripts/_common.sh) compiles `scripts/launcher.c` — a thin
-    supervisor that spawns `bun src/cli.ts run` and stays alive as the parent so
-    the ffmpeg/osascript children inherit the identity. The launcher's hash is
-    stable across daemon source edits, so the Mic/Accessibility/Automation grants
-    survive every `deploy` (which just restarts; only `install` recompiles).
-    Hammerspoon is also installed if a different key backend is ever wanted.
-  - **A `usbaudiod` restart (device replug, audio-stack reset) kills the
-    avfoundation stream without ending ffmpeg** — ffmpeg blocks in a dead Core
-    Audio read, ignores SIGTERM (only SIGKILL works), and wedges the device for
-    other readers. Symptom: daemon logs "Listening" then nothing for hours.
-    `capture.ts` handles this with a no-data watchdog (healthy capture delivers
-    PCM continuously, silence included, so a ~5s data gap = dead stream →
-    SIGKILL + reconnect), and `stop()` SIGKILLs so restarts can't orphan a
-    wedged ffmpeg.
-- **Linux (this machine, CachyOS/KDE Wayland):** capture is `ffmpeg -f pulse`
-  (PipeWire's pulse compat; `pactl` enumerates sources) *or* `ffmpeg -f alsa`
-  (`arecord -l` enumerates raw PCMs) — `ffmpegInputArgs` picks per the device's
-  `backend`; see the two-PCM gotcha above. Keypresses `ydotool`
-  (needs `ydotoold` running + `/dev/uinput` access). ydotool speaks raw keycodes,
-  so `actions.ts` maps the keyspec vocabulary to Linux input-event-codes.
+## Audio and hardware invariants
+
+- The CUBILUX HLMS-C4 exposes two capture PCMs. The live signal is device 1;
+  PipeWire's advertised analog source maps to silent device 0. For direct
+  capture, use stable `hw:CARD=...,DEV=...` identifiers, never the numeric card
+  index. Diagnose with `arecord -l` and per-device FFmpeg `volumedetect`.
+- This host uses `input_device = "alsa:ting_shared"`. The `ting_shared` dsnoop in
+  the dotfiles lets tingtype read raw ALSA with low latency while the
+  `ting-mic-bridge` service republishes the same stream as PipeWire source
+  `TingMic` for Handy. Raw `hw:HLMSC4,1` is valid but exclusive.
+- The ting sample uses hold/loop playmode and is loaded identically into all four
+  slots. Keep it about 150 ms. A sample longer than the 400 ms gesture hold
+  threshold makes taps register as holds. Preserve exact-bin, phase-continuous
+  synthesis at 48 kHz.
+- Missing or unplugged input is normal. Capture supervision polls and reconnects
+  with backoff.
+
+## macOS invariants
+
+The launchd daemon runs through the signed `TingType.app` launcher so microphone,
+Accessibility, and Automation permissions attach to a stable TCC identity. A bare
+Bun launchd process silently loses those capabilities. `build_app_bundle` compiles
+the launcher; routine `deploy` restarts without replacing that identity.
+
+Use System Events for key injection. `cliclick` special-key CGEvents are dropped
+by some current applications.
+
+After an audio-stack restart, avfoundation can stop producing data while FFmpeg
+remains alive and ignores SIGTERM. Keep the no-data watchdog and SIGKILL cleanup
+in `capture.ts`; removing either can wedge the device across daemon restarts.
+
+## Linux invariants
+
+`ffmpegInputArgs` selects Pulse or ALSA from the resolved device backend.
+`arecord -l` discovers hardware PCMs; an `alsa:<pcm>` configuration targets a
+literal ALSA PCM such as the dsnoop name. `ydotoold` must be running with access
+to `/dev/uinput`, and `actions.ts` maps the keyspec vocabulary to Linux input
+event codes.
