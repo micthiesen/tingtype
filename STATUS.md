@@ -174,6 +174,6 @@ auto-mount — that's expected; load.sh uses mtools anyway).
 
 ## Architecture
 
-See `CLAUDE.md` (conventions + module map) and `README.md` (usage/permissions).
+See `AGENTS.md` (conventions + module map) and `README.md` (usage/permissions).
 Pure core (`dsp/`, `gesture.ts`) is unit-tested offline; `audio/capture.ts`
 (ffmpeg) and `actions.ts` (osascript/ydotool) are the impure edges.
